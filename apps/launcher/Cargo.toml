@@ -1,0 +1,10 @@
+[package]
+name = "engine-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+engine-app = { path = "../../crates/app" }
+engine-core = { path = "../../crates/core" }

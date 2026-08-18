@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/ecs",
+    "crates/platform",
+    "crates/render",
+    "crates/physics",
+    "crates/audio",
+    "crates/asset",
+    "crates/scene",
+    "crates/script",
+    "crates/ui",
+    "crates/devtools",
+    "crates/app",
+    "crates/engine-cli",
+    "apps/launcher",
+    "apps/editor",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.85"
+repository = "https://github.com/Manshooo/rgine"
+homepage = "https://github.com/Manshooo/rgine"
+
+[workspace.dependencies]
+glam = "0.30"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+winit = "0.30"
