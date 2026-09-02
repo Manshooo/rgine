@@ -18,6 +18,9 @@ Migrations for schema version N are kept for at least two subsequent minor cycle
 
 Deprecation requires the replacement to exist for one full minor cycle before removal.
 
+### Pre-1.0 mapping
+Before 1.0, cargo treats the second position as the compatibility unit, so the three levels above map onto two positions: a breaking change bumps `0.1.x` to `0.2.0`, and both additive and no-change releases bump the third position. The changelog distinguishes additive from fix-only releases even where the version number cannot. From 1.0 the mapping is one to one.
+
 ## Reasons
 - Godot ships breaking changes in minor releases: add-ons built against a previous version fail at runtime with missing-method errors, and renamed enum members break compatibility. For an engine with a plugin ecosystem this costs more than the API improvement is worth.
 - The Godot 3 to 4 migration is the larger warning: the automated converter produces a project that still needs substantial manual fixing, and C# API types shifted from `int` to `long` and `float` to `double`. Deciding the policy after a public release is too late.
