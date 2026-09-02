@@ -97,6 +97,8 @@ GitHub Issues. One issue per unit of work, and every pull request closes exactly
 | priority | `P0` blocks the current phase, `P1` planned for it, `P2` desirable |
 | state | `blocked`, `needs-adr` |
 
+Labels and milestones are created by `./.github/setup-repo.sh`. It is idempotent and is the record of the taxonomy - add labels there rather than by hand in the web interface, or the two drift apart.
+
 **Ready to start** means the issue states what and why, has acceptance criteria that can be checked, and carries an area label and a milestone. An issue that needs an architectural decision gets `needs-adr` and does not start until the ADR is accepted.
 
 `PROJECT_STATUS.md` is updated at phase boundaries, not per pull request. Updating it on every merge produces constant conflicts and adds nothing the issue tracker does not already show.

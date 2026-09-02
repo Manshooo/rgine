@@ -16,6 +16,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.gitattributes` pinning line endings and binary asset handling.
 - `CHANGELOG.md`.
 - Pull request and issue templates.
+- `.github/setup-repo.sh`, an idempotent bootstrap for the label taxonomy and the roadmap-phase milestones.
 - Iteration budgets in `ROADMAP.md`, to be enforced in CI.
 
 ### Changed
