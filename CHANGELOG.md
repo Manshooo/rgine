@@ -33,6 +33,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `CONTRIBUTING.md`: full development pipeline.
 - CI now triggers on `master` rather than `main`, which is where the default branch actually is - no push to it had ever run CI. Runs superseded by a new push are cancelled, the cargo registry is cached, builds use `--locked`, and the Android job skips `xtask`, which is host-only tooling.
 - `Cargo.lock` is committed instead of ignored, since the workspace produces binaries.
+- `master-protect` requires the `boundaries` check. `cargo xtask check-deps` ran on every pull request but could not block one, so the boundaries it exists to enforce were advisory.
 
 ### Removed
 - `winit` from `crates/app/Cargo.toml`. The workspace now names the windowing backend in `crates/platform` only.
