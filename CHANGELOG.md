@@ -15,6 +15,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - ADR 0008: development workflow.
 - ADR 0009, recording that `platform` is a replaceable backend and is bound by the backend API rules.
 - ADR 0010: the phase 1 ECS data model - entity identity, storage kind per component type, archetypes, deferred structural change, tick-based change detection, hooks and required components, and relationships with the hierarchy built on them.
+- `engine-ecs` public API: `Entity` and `World`, the first two items of the phase 1 surface named by ADR 0010. An entity is an eight-byte handle of index and non-zero generation - so `Option<Entity>` is eight bytes too - handed out by an allocator whose free list is threaded through the entity slots themselves and reused last-in-first-out. Despawn raises the generation, which is what makes a stale handle detectable; a slot whose generation cannot be raised again is retired rather than reused. `World` currently offers `spawn_empty`, `despawn`, `contains` and `entity_count`.
 - `engine-platform` public API: `PlatformApp`, `run`, `Commands`, `Command`, `Event`, `WindowEvent`, `WindowId`, `WindowDesc` and `PlatformError`, all owned by the crate and free of backend types (ADR 0009).
 - `App::with_window`, so the opened window is described by the caller.
 - Unit tests for command recording and for the application's loop policy; both run without an event loop.
@@ -32,6 +33,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
+- ADR 0010 is `Accepted`. It was recorded as `Proposed` when the model was written; phase 1 now implements it, and an issue carrying `needs-adr` does not start against a proposal.
 - `engine-app` drives the event loop through `engine-platform` instead of `winit`. `App::run` now returns `Result<(), PlatformError>`; it previously returned `Result<(), winit::error::EventLoopError>`.
 - `engine-platform` selects `winit`'s `android-native-activity` feature when targeting Android. The Android CI job could not build `android-activity` without it.
 - `ARCHITECTURE.md`: two data levels, backend API rules extended to `platform`, boundaries enforced by `xtask` rather than convention including backend containment, and the API/schema snapshot boundary marked as not yet implemented.
@@ -44,6 +46,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `master-protect` requires the `boundaries`, `msrv` and `deny` checks. `cargo xtask check-deps` ran on every pull request but could not block one, so the boundaries it exists to enforce were advisory; the same would have been true of the two new checks.
 
 ### Removed
+- `engine_ecs::VERSION`. It was the placeholder a bootstrap crate carries to have a public item at all; ADR 0010 enumerates the phase 1 surface of this crate and it is not on the list.
 - `winit` from `crates/app/Cargo.toml`. The workspace now names the windowing backend in `crates/platform` only.
 - `engine_platform::window::run_empty_window`. Opening a window is loop policy and belongs to `app`.
 

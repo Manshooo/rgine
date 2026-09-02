@@ -1,6 +1,6 @@
 # ADR 0010: ECS data model
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-02
 
 ## Decision
