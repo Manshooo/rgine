@@ -18,6 +18,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `App::with_window`, so the opened window is described by the caller.
 - Unit tests for command recording and for the application's loop policy; both run without an event loop.
 - `xtask` crate and `cargo xtask check-deps`, asserting the boundaries in ARCHITECTURE.md over the `cargo metadata` graph: editor-side crates unreachable from runtime crates, domain crates not naming apps, and backend crates named only by the crate that owns them (ADR 0009). Wired into CI as the `boundaries` job.
+- `empty_window`, an example on `engine-app`, so the phase 0 exit criterion - an empty window opens and closes cleanly - can be run rather than asserted: `cargo run -p engine-app --example empty_window`.
 - `.gitattributes` pinning line endings and binary asset handling.
 - `CHANGELOG.md`.
 - Pull request and issue templates.
@@ -41,4 +42,5 @@ Entries are written in the pull request that makes the change, under `Unreleased
 
 ### Fixed
 - `cargo check` for `aarch64-linux-android` failed because `android-activity` refuses to compile without a backend feature. `engine-platform` now selects `android-native-activity` for Android targets.
+- A closed window left the process running. The winit backend kept the default `Wait` control flow, so the loop slept instead of iterating: the application was updated only when the OS delivered an event, and the `Exit` command recorded from that update was applied on whatever unrelated message happened to arrive next. The backend now polls, which is also what the documented "once per loop iteration" contract and a fixed timestep require.
 - `actions/checkout` bumped to v5; v4 targets the deprecated Node.js 20 runtime.

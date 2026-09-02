@@ -6,7 +6,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::WindowEvent as BackendWindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId as BackendWindowId},
 };
 
@@ -15,6 +15,14 @@ use crate::{Command, Commands, Event, PlatformApp, PlatformError, WindowEvent, W
 pub(crate) fn run<A: PlatformApp>(app: A) -> Result<(), PlatformError> {
     let event_loop =
         EventLoop::new().map_err(|error| PlatformError::EventLoop(error.to_string()))?;
+    // The contract is that the application is updated once per loop iteration,
+    // which is also what a fixed timestep will need. Under the default `Wait`
+    // the loop sleeps until the OS sends something, so updates would only
+    // happen on input and a command recorded during the last update - `Exit`
+    // included - would not be acted on until the next unrelated message
+    // arrived. That is observable as a window that stays open after it is
+    // closed.
+    event_loop.set_control_flow(ControlFlow::Poll);
     let mut driver = Driver::new(app);
     event_loop
         .run_app(&mut driver)
