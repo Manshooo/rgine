@@ -22,3 +22,10 @@
 cargo check --workspace
 cargo test --workspace
 cargo run -p engine-cli -- --help
+```
+
+Пустое окно - критерий выхода фазы 0:
+
+```bash
+cargo run -p engine-app --example empty_window
+```
