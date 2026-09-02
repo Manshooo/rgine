@@ -7,3 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 winit.workspace = true
+
+# winit delegates the Android entry point to android-activity, which refuses to
+# build unless exactly one activity backend is selected.
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-native-activity"] }

@@ -36,7 +36,7 @@ Authoring data and runtime data are separate representations with a deterministi
 
 ## Backend API rules
 
-The rules below apply to the public surface of `render`, `physics`, `audio` and `script`. They are what makes those backends genuinely replaceable rather than nominally so.
+The rules below apply to the public surface of `platform`, `render`, `physics`, `audio` and `script`. They are what makes those backends genuinely replaceable rather than nominally so. `platform` is covered on the same terms as the rest (ADR 0008): windowing is a backend choice like any other.
 
 - **Handles, not pointers.** Callers hold opaque identifiers; the backend owns the storage.
 - **Commands in one direction.** Backends may process work asynchronously. Any call that returns a value is therefore a synchronization point, and the API is shaped so such a call is hard to write by accident in a per-frame path.
@@ -49,4 +49,5 @@ These are checked by `xtask` in CI, not stated as convention:
 
 - `editor` and `devtools` are not reachable from any runtime crate's dependency graph;
 - domain crates do not depend on `apps`;
+- a backend crate (`winit` today) is named only by the crate that owns it, per ADR 0008;
 - the public API surface and serialized schemas match their recorded snapshots, per ADR 0005.
