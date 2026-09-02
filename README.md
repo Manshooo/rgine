@@ -31,3 +31,10 @@ cargo run -p engine-cli -- --help
 - MIT ([LICENSE-MIT](LICENSE-MIT)).
 
 `SPDX: MIT OR Apache-2.0`. Вклад в проект принимается на тех же условиях, без отдельного соглашения.
+```
+
+Пустое окно - критерий выхода фазы 0:
+
+```bash
+cargo run -p engine-app --example empty_window
+```
