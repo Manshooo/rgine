@@ -17,6 +17,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `engine-platform` public API: `PlatformApp`, `run`, `Commands`, `Command`, `Event`, `WindowEvent`, `WindowId`, `WindowDesc` and `PlatformError`, all owned by the crate and free of backend types (ADR 0009).
 - `App::with_window`, so the opened window is described by the caller.
 - Unit tests for command recording and for the application's loop policy; both run without an event loop.
+- `xtask` crate and `cargo xtask check-deps`, asserting the boundaries in ARCHITECTURE.md over the `cargo metadata` graph: editor-side crates unreachable from runtime crates, domain crates not naming apps, and backend crates named only by the crate that owns them (ADR 0009). Wired into CI as the `boundaries` job.
 - `.gitattributes` pinning line endings and binary asset handling.
 - `CHANGELOG.md`.
 - Pull request and issue templates.
@@ -27,10 +28,10 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ### Changed
 - `engine-app` drives the event loop through `engine-platform` instead of `winit`. `App::run` now returns `Result<(), PlatformError>`; it previously returned `Result<(), winit::error::EventLoopError>`.
 - `engine-platform` selects `winit`'s `android-native-activity` feature when targeting Android. The Android CI job could not build `android-activity` without it.
-- `ARCHITECTURE.md`: two data levels, backend API rules extended to `platform`, and boundaries enforced by `xtask` rather than convention, including backend containment.
+- `ARCHITECTURE.md`: two data levels, backend API rules extended to `platform`, boundaries enforced by `xtask` rather than convention including backend containment, and the API/schema snapshot boundary marked as not yet implemented.
 - `ROADMAP.md`: per-phase additions and a mod-loading track separated from scripting.
 - `CONTRIBUTING.md`: full development pipeline.
-- CI now triggers on `master` rather than `main`, cancels superseded pull request runs, caches the cargo registry and builds with `--locked`.
+- CI now triggers on `master` rather than `main`, which is where the default branch actually is - no push to it had ever run CI. Runs superseded by a new push are cancelled, the cargo registry is cached, builds use `--locked`, and the Android job skips `xtask`, which is host-only tooling.
 - `Cargo.lock` is committed instead of ignored, since the workspace produces binaries.
 
 ### Removed

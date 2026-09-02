@@ -19,6 +19,7 @@
 - [x] ADR 0006 no code hot reloading in 0.1
 - [x] ADR 0007 gameplay scripting layer (Proposed - deferred, no scripting in 0.1)
 - [x] ADR 0009 platform is a replaceable backend; `app` no longer depends on `winit`
+- [x] Add xtask dependency-graph check: editor/devtools unreachable from runtime crates, and backend crates named only by the crate that owns them (ADR 0009)
 - [x] Iteration budgets defined in ROADMAP
 
 # Next
@@ -26,7 +27,6 @@
 - [ ] Confirm Rust MSRV policy
 - [ ] Implement type registry and reflection derive (ADR 0003) - blocks the first serialized type
 - [ ] Implement real ECS storage: archetype + sparse, relations, required components, hooks
-- [ ] Add xtask dependency-graph check: editor/devtools unreachable from runtime crates, and backend crates named only by the crate that owns them (ADR 0009)
 - [ ] Add iteration budget harness to CI
 - [ ] Add cargo-deny
 - [ ] Add dependency/license policy
