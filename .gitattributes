@@ -1,0 +1,65 @@
+# Line endings are LF in the repository and LF in the working tree on every
+# platform. This is explicit rather than delegated to core.autocrlf, so the
+# result does not depend on a contributor's local git configuration.
+* text=auto eol=lf
+
+# Windows shells require CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Shell scripts must stay LF even when checked out on Windows.
+*.sh   text eol=lf
+
+# Source and data, with language-aware diff hunk headers where git has them.
+*.rs     text diff=rust
+*.toml   text
+*.md     text diff=markdown
+*.ron    text
+*.wgsl   text
+*.glsl   text
+*.hlsl   text
+*.json   text
+*.gltf   text
+*.yml    text
+*.yaml   text
+
+# Binary. Never diffed, never merged, never end-of-line converted.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.tga    binary
+*.bmp    binary
+*.dds    binary
+*.exr    binary
+*.hdr    binary
+*.ktx2   binary
+*.basis  binary
+*.glb    binary
+*.fbx    binary
+*.obj    binary
+*.blend  binary
+*.ttf    binary
+*.otf    binary
+*.woff2  binary
+*.wav    binary
+*.ogg    binary
+*.mp3    binary
+*.flac   binary
+*.pak    binary
+*.bin    binary
+
+# Resolved by cargo, reviewed as a whole rather than line by line.
+Cargo.lock text linguist-generated=true
+
+# Keeps documentation out of the repository language statistics.
+docs/**  linguist-documentation
+
+# Scene and prefab merges go through the engine merge driver once it exists
+# (ROADMAP phase 3, ADR 0004). Until then RON files merge as ordinary text.
+# The line to enable it will be:
+#   *.scene.ron  merge=rgine
+#   *.prefab.ron merge=rgine
+# together with, in each clone:
+#   git config merge.rgine.name "rgine scene merge"
+#   git config merge.rgine.driver "cargo run -p engine-cli -- merge %O %A %B %P"

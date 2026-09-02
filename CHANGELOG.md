@@ -1,22 +1,42 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable changes to rgine are recorded here, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to the compatibility policy in ADR 0005.
+Entries are written in the pull request that makes the change, under `Unreleased`, and moved into a dated section at release time. Versioning follows [ADR 0005](docs/adr/0005-compatibility-policy.md); the pre-1.0 mapping onto version positions is in [CONTRIBUTING](docs/CONTRIBUTING.md#versioning-and-releases).
 
 ## [Unreleased]
 
 ### Added
-- `engine-platform` public API: `PlatformApp`, `run`, `Commands`, `Command`, `Event`, `WindowEvent`, `WindowId`, `WindowDesc` and `PlatformError`, all owned by the crate and free of backend types (ADR 0008).
-- ADR 0008, recording that `platform` is a replaceable backend and is bound by the backend API rules.
+- ADR 0003: type registry and reflection.
+- ADR 0004: authoring data model, splitting `Truth` from the runtime ECS `World`.
+- ADR 0005: compatibility and versioning policy.
+- ADR 0006: no code hot reloading in 0.1.
+- ADR 0007: gameplay scripting layer, proposed and deferred.
+- ADR 0008: development workflow.
+- ADR 0009, recording that `platform` is a replaceable backend and is bound by the backend API rules.
+- `engine-platform` public API: `PlatformApp`, `run`, `Commands`, `Command`, `Event`, `WindowEvent`, `WindowId`, `WindowDesc` and `PlatformError`, all owned by the crate and free of backend types (ADR 0009).
 - `App::with_window`, so the opened window is described by the caller.
 - Unit tests for command recording and for the application's loop policy; both run without an event loop.
+- `.gitattributes` pinning line endings and binary asset handling.
+- `CHANGELOG.md`.
+- Pull request and issue templates.
+- `.github/setup-repo.sh`, an idempotent bootstrap for the label taxonomy and the roadmap-phase milestones.
+- Iteration budgets in `ROADMAP.md`, to be enforced in CI.
+- `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
 - `engine-app` drives the event loop through `engine-platform` instead of `winit`. `App::run` now returns `Result<(), PlatformError>`; it previously returned `Result<(), winit::error::EventLoopError>`.
 - `engine-platform` selects `winit`'s `android-native-activity` feature when targeting Android. The Android CI job could not build `android-activity` without it.
-- ARCHITECTURE.md extends the backend API rules to `platform` and adds the backend-containment rule to the boundaries `xtask` is to enforce.
+- `ARCHITECTURE.md`: two data levels, backend API rules extended to `platform`, and boundaries enforced by `xtask` rather than convention, including backend containment.
+- `ROADMAP.md`: per-phase additions and a mod-loading track separated from scripting.
+- `CONTRIBUTING.md`: full development pipeline.
+- CI now triggers on `master` rather than `main`, cancels superseded pull request runs, caches the cargo registry and builds with `--locked`.
+- `Cargo.lock` is committed instead of ignored, since the workspace produces binaries.
 
 ### Removed
 - `winit` from `crates/app/Cargo.toml`. The workspace now names the windowing backend in `crates/platform` only.
 - `engine_platform::window::run_empty_window`. Opening a window is loop policy and belongs to `app`.
+
+### Fixed
+- `cargo check` for `aarch64-linux-android` failed because `android-activity` refuses to compile without a backend feature. `engine-platform` now selects `android-native-activity` for Android targets.
+- `actions/checkout` bumped to v5; v4 targets the deprecated Node.js 20 runtime.

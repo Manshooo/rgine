@@ -1,4 +1,4 @@
-# ADR 0008: Platform is a replaceable backend
+# ADR 0009: Platform is a replaceable backend
 
 - Status: Accepted
 - Date: 2026-09-02
