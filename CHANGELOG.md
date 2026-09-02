@@ -29,3 +29,4 @@ Entries are written in the pull request that makes the change, under `Unreleased
 
 ### Fixed
 - `cargo check` for `aarch64-linux-android` failed because `android-activity` refuses to compile without a backend feature. `engine-platform` now selects `android-native-activity` for Android targets.
+- `actions/checkout` bumped to v5; v4 targets the deprecated Node.js 20 runtime.
