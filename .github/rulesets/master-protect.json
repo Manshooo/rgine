@@ -34,7 +34,8 @@
           { "context": "host (ubuntu-latest)" },
           { "context": "host (windows-latest)" },
           { "context": "host (macos-latest)" },
-          { "context": "android" }
+          { "context": "android" },
+          { "context": "boundaries" }
         ]
       }
     }
