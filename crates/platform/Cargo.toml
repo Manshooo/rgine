@@ -7,3 +7,11 @@ rust-version.workspace = true
 
 [dependencies]
 winit.workspace = true
+
+# android-activity refuses to compile unless a backend is selected, and the
+# choice belongs to whoever owns the platform layer rather than to winit.
+# Provisional: NativeActivity needs no Java side and works with the simplest
+# packaging path. GameActivity is the stronger long-term fit for a game engine
+# but requires a Gradle/AGDK build, so it is a phase 4 decision, not a flag flip.
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-native-activity"] }

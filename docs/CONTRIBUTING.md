@@ -67,6 +67,14 @@ Every change reaches `master` through a pull request. There are no exceptions fo
 
 Self-merge is allowed while the project has one maintainer. Merging with red CI is not, in any circumstance.
 
+The branch ruleset that enforces this lives in `.github/rulesets/master-protect.json`. GitHub does not read it from the repository, so it is applied with:
+
+```bash
+gh api -X PUT repos/Manshooo/rgine/rulesets/<id> --input .github/rulesets/master-protect.json
+```
+
+Keep the file and the live ruleset in step; the file is the reviewable record of what the trunk is protected by.
+
 ## Merging
 
 **Squash merge only.** Merge commits and rebase merges are disabled.

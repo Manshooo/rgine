@@ -18,6 +18,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - Pull request and issue templates.
 - `.github/setup-repo.sh`, an idempotent bootstrap for the label taxonomy and the roadmap-phase milestones.
 - Iteration budgets in `ROADMAP.md`, to be enforced in CI.
+- `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
 - `ARCHITECTURE.md`: two data levels, backend API rules, boundaries enforced by `xtask` rather than convention.
@@ -25,3 +26,6 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `CONTRIBUTING.md`: full development pipeline.
 - CI now triggers on `master` rather than `main`, cancels superseded pull request runs, caches the cargo registry and builds with `--locked`.
 - `Cargo.lock` is committed instead of ignored, since the workspace produces binaries.
+
+### Fixed
+- `cargo check` for `aarch64-linux-android` failed because `android-activity` refuses to compile without a backend feature. `engine-platform` now selects `android-native-activity` for Android targets.
