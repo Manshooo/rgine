@@ -1,0 +1,69 @@
+# Dependency policy, enforced by `cargo deny check` in CI.
+#
+# The policy exists because an engine is a dependency: whatever reaches a
+# shipped game reaches it through us, so an unaudited advisory or a
+# copyleft licence in the graph is our problem before it is the game's.
+#
+# Documented in docs/CONTRIBUTING.md#dependency-policy.
+
+[graph]
+# The platforms the engine is built for. A dependency that only appears on a
+# target outside this list is not checked, so the list must stay in step with
+# the targets CI builds.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "aarch64-linux-android",
+]
+all-features = true
+
+[advisories]
+version = 2
+# Every ignored advisory is a dated entry with a reason, not a bare id.
+ignore = [
+    # 2026-09-02. `ttf-parser` is unmaintained. It reaches us four levels down,
+    # through winit -> sctk-adwaita -> ab_glyph, and only on Wayland, where it
+    # renders the title text of client-side decorations. There is no fixed
+    # version to move to and nothing here calls it directly; it goes when winit
+    # replaces sctk-adwaita or the engine draws its own decorations.
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained font parser pulled in by winit's Wayland decorations; no upgrade exists and no engine code reaches it" },
+]
+
+[licenses]
+version = 2
+# Permissive only. The engine links into games whose licensing we do not
+# control, so a copyleft obligation in the graph - even a file-scoped one -
+# is a decision that has to be made deliberately, in a pull request that
+# adds it here.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[bans]
+# Duplicate versions are noise in a young graph and a size problem in an old
+# one; they are reported, not fatal, until the graph is large enough for the
+# report to mean something.
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace crates depend on each other by path and carry no version
+# requirement, which reads as a wildcard. That is the intended shape while
+# nothing is published; publishing will add versions to those entries.
+allow-wildcard-paths = true
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

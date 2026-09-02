@@ -39,6 +39,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask check-deps
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+      - uses: Swatinem/rust-cache@v2
+      # rust-toolchain.toml pins the channel for everyone working in the
+      # repository, and a directory override outranks the toolchain this job
+      # installed. RUSTUP_TOOLCHAIN outranks both, so without it this job
+      # would quietly re-check the same stable as `host`.
+      - run: cargo check --workspace --all-targets --locked
+        env:
+          RUSTUP_TOOLCHAIN: "1.85.0"
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check all
+
   android:
     runs-on: ubuntu-latest
     steps:

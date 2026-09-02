@@ -22,3 +22,12 @@
 cargo check --workspace
 cargo test --workspace
 cargo run -p engine-cli -- --help
+
+## Лицензия
+
+Двойная лицензия, на выбор пользователя:
+
+- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE));
+- MIT ([LICENSE-MIT](LICENSE-MIT)).
+
+`SPDX: MIT OR Apache-2.0`. Вклад в проект принимается на тех же условиях, без отдельного соглашения.

@@ -6,5 +6,5 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-engine-app = { path = "../../crates/app" }
-engine-core = { path = "../../crates/core" }
+engine-app.workspace = true
+engine-core.workspace = true

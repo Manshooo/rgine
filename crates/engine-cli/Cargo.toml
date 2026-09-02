@@ -6,4 +6,4 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-engine-app = { path = "../app" }
+engine-app.workspace = true
