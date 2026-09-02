@@ -14,6 +14,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - ADR 0007: gameplay scripting layer, proposed and deferred.
 - ADR 0008: development workflow.
 - ADR 0009, recording that `platform` is a replaceable backend and is bound by the backend API rules.
+- ADR 0010: the phase 1 ECS data model - entity identity, storage kind per component type, archetypes, deferred structural change, tick-based change detection, hooks and required components, and relationships with the hierarchy built on them.
 - `engine-platform` public API: `PlatformApp`, `run`, `Commands`, `Command`, `Event`, `WindowEvent`, `WindowId`, `WindowDesc` and `PlatformError`, all owned by the crate and free of backend types (ADR 0009).
 - `App::with_window`, so the opened window is described by the caller.
 - Unit tests for command recording and for the application's loop policy; both run without an event loop.
