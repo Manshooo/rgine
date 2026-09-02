@@ -22,12 +22,21 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 rust-version = "1.85"
 repository = "https://github.com/Manshooo/rgine"
 homepage = "https://github.com/Manshooo/rgine"
 
 [workspace.dependencies]
+# Engine crates depend on each other through these entries rather than by bare
+# path, so the version they will be published under is written in one place and
+# a release bumps it once. A path dependency without a version reads as a
+# wildcard requirement, which `cargo deny` rejects for a publishable crate.
+engine-core = { path = "crates/core", version = "0.1.0" }
+engine-ecs = { path = "crates/ecs", version = "0.1.0" }
+engine-platform = { path = "crates/platform", version = "0.1.0" }
+engine-app = { path = "crates/app", version = "0.1.0" }
+
 glam = "0.30"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

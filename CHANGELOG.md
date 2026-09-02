@@ -18,6 +18,10 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `App::with_window`, so the opened window is described by the caller.
 - Unit tests for command recording and for the application's loop policy; both run without an event loop.
 - `xtask` crate and `cargo xtask check-deps`, asserting the boundaries in ARCHITECTURE.md over the `cargo metadata` graph: editor-side crates unreachable from runtime crates, domain crates not naming apps, and backend crates named only by the crate that owns them (ADR 0009). Wired into CI as the `boundaries` job.
+- `LICENSE-MIT` alongside `LICENSE-APACHE`: the workspace is dual-licensed `MIT OR Apache-2.0`, the licensing every Rust dependency of ours already assumes.
+- `deny.toml` and the `deny` CI job, running `cargo deny check all`: a permissive-only licence allow-list, fatal advisories, crates.io as the only source, and duplicate versions reported rather than fatal.
+- `msrv` CI job, checking the workspace on 1.85 - the MSRV recorded in `[workspace.package]` and, until now, never tested.
+- Dependency and toolchain policy in `CONTRIBUTING`, covering what raising the MSRV requires and what adding a dependency requires.
 - `empty_window`, an example on `engine-app`, so the phase 0 exit criterion - an empty window opens and closes cleanly - can be run rather than asserted: `cargo run -p engine-app --example empty_window`.
 - `.gitattributes` pinning line endings and binary asset handling.
 - `CHANGELOG.md`.
@@ -34,7 +38,9 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `CONTRIBUTING.md`: full development pipeline.
 - CI now triggers on `master` rather than `main`, which is where the default branch actually is - no push to it had ever run CI. Runs superseded by a new push are cancelled, the cargo registry is cached, builds use `--locked`, and the Android job skips `xtask`, which is host-only tooling.
 - `Cargo.lock` is committed instead of ignored, since the workspace produces binaries.
-- `master-protect` requires the `boundaries` check. `cargo xtask check-deps` ran on every pull request but could not block one, so the boundaries it exists to enforce were advisory.
+- `license` in `[workspace.package]` is `MIT OR Apache-2.0` rather than `Apache-2.0`.
+- Engine crates depend on each other through `[workspace.dependencies]` entries carrying both a path and a version, instead of bare paths. A path dependency with no version requirement is a wildcard, which `cargo deny` rejects for a publishable crate; the version now lives in one place and a release bumps it once.
+- `master-protect` requires the `boundaries`, `msrv` and `deny` checks. `cargo xtask check-deps` ran on every pull request but could not block one, so the boundaries it exists to enforce were advisory; the same would have been true of the two new checks.
 
 ### Removed
 - `winit` from `crates/app/Cargo.toml`. The workspace now names the windowing backend in `crates/platform` only.

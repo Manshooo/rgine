@@ -87,8 +87,11 @@ Required before merge:
 - `cargo check --workspace --locked` on Linux, Windows, macOS and the Android target
 - `cargo test --workspace --locked`
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
+- `cargo check --workspace --all-targets --locked` on the MSRV toolchain
+- `cargo deny check all`
+- `cargo xtask check-deps`
 
-As the corresponding roadmap phases land, these join the list: the `xtask` dependency-graph check (editor and devtools unreachable from runtime crates), `cargo deny`, the public API and schema snapshot checks required by ADR 0005, and the iteration budget harness.
+As the corresponding roadmap phases land, these join the list: the public API and schema snapshot checks required by ADR 0005, and the iteration budget harness.
 
 ## Task tracking
 
@@ -141,10 +144,31 @@ Release:
 
 1. Confirm `master` is green.
 2. Decide the bump from the `BREAKING CHANGE:` footers and changelog entries since the last tag.
-3. Set the workspace version in the root `Cargo.toml`, run `cargo check --workspace` to refresh `Cargo.lock`.
+3. Set the workspace version in the root `Cargo.toml` - both `[workspace.package].version` and the version on each engine entry in `[workspace.dependencies]`, which must match it - then run `cargo check --workspace` to refresh `Cargo.lock`.
 4. Move `## [Unreleased]` to a dated version section in `CHANGELOG.md`.
 5. Merge that as `chore(release): v0.1.0`.
 6. Tag `v0.1.0` on the resulting commit and push the tag.
+
+## Dependencies and toolchain
+
+### Minimum supported Rust version
+
+MSRV is `1.85`, recorded once in `[workspace.package].rust-version` and checked by the `msrv` CI job. It is what edition 2024 requires, so it cannot drop below that.
+
+Raising it is a deliberate `build(deps):` pull request that says which feature or dependency forced the bump - not a side effect of using something new. `rust-toolchain.toml` pins `stable` for day-to-day work; the two are different questions, and the MSRV job overrides the pin with `RUSTUP_TOOLCHAIN` so that it actually tests the older compiler.
+
+### Dependency policy
+
+The policy lives in `deny.toml` and is enforced by the `deny` CI job, which runs `cargo deny check all`: advisories, licences, bans and sources.
+
+- **Licences are permissive only.** The allow-list in `deny.toml` is the authority. The engine is linked into games whose licensing we do not control, so anything copyleft - including file-scoped MPL - is a decision made in a pull request that adds it to the list, with the reason in the description.
+- **Advisories are fatal.** An ignored advisory is an entry in `deny.toml` carrying its id, the date and why it does not apply here; the ignore list is reviewed when the entry's cause is fixed upstream.
+- **Sources are crates.io only.** A git dependency needs an ADR: it is a fork or an unreleased crate, and both are commitments.
+- **Duplicate versions warn rather than fail** while the graph is small enough that the report would be noise.
+
+Adding a dependency is a design decision, not a convenience. Say in the pull request what it does that the standard library and the existing graph do not, and check its licence, MSRV, maintenance and platform coverage - Android included, since a crate that does not build there costs a target. A dependency behind a replaceable backend (`render`, `physics`, `audio`, `platform`, `script`) additionally requires an ADR, per the rules above.
+
+`cargo deny` is not part of the toolchain file; install it once with `cargo install cargo-deny --locked` to run the check locally.
 
 ## Definition of done
 

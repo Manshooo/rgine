@@ -35,6 +35,8 @@
           { "context": "host (windows-latest)" },
           { "context": "host (macos-latest)" },
           { "context": "android" },
+          { "context": "msrv" },
+          { "context": "deny" },
           { "context": "boundaries" }
         ]
       }

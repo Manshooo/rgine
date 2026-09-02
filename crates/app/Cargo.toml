@@ -6,6 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-engine-core = { path = "../core" }
-engine-ecs = { path = "../ecs" }
-engine-platform = { path = "../platform" }
+engine-core.workspace = true
+engine-ecs.workspace = true
+engine-platform.workspace = true
