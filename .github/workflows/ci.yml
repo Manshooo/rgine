@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 jobs:
@@ -21,6 +21,13 @@ jobs:
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo xtask check-deps
+
   android:
     runs-on: ubuntu-latest
     steps:
@@ -28,4 +35,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
-      - run: cargo check --workspace --target aarch64-linux-android
+      # xtask is host-only tooling; cross-compiling it proves nothing.
+      - run: cargo check --workspace --exclude xtask --target aarch64-linux-android

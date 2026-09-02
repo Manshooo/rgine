@@ -45,9 +45,9 @@ The rules below apply to the public surface of `platform`, `render`, `physics`, 
 
 ## Enforced boundaries
 
-These are checked by `xtask` in CI, not stated as convention:
+These are checked by `cargo xtask check-deps` in CI, not stated as convention:
 
 - `editor` and `devtools` are not reachable from any runtime crate's dependency graph;
 - domain crates do not depend on `apps`;
 - a backend crate (`winit` today) is named only by the crate that owns it, per ADR 0008;
-- the public API surface and serialized schemas match their recorded snapshots, per ADR 0005.
+- the public API surface and serialized schemas match their recorded snapshots, per ADR 0005 (not yet implemented; due with Phase 7).
