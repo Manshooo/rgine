@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- ECS components can declare required defaults and add/remove hooks on their shared type registration. Hooks observe the completed structural change and can queue follow-up commands (ADR 0010).
 - ECS `Commands` defer entity spawns, despawns, and component edits until the stage boundary. Commands apply in recording order and skip stale entity handles (ADR 0010).
 - Tick-based ECS change detection. `Added` and `Changed` queries match the current tick or a window since a system's previous run, including across tick wraparound.
 - `engine-ecs` queries borrow whole component types and visit archetypes in creation order. Queries support shared and mutable component references, `With` and `Without` filters, and disjoint mutable access by entity.

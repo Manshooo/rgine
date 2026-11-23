@@ -5,9 +5,12 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as Tokens};
 use quote::quote;
-use syn::{Attribute, Data, DeriveInput, Error, LitStr, parse_macro_input, parse_quote};
+use syn::{
+    Attribute, Data, DeriveInput, Error, LitStr, Path, Token, Type, parenthesized,
+    parse_macro_input, parse_quote,
+};
 
-/// Declares the storage of an `engine_ecs::Component`.
+/// Declares storage, requirements, and hooks for an `engine_ecs::Component`.
 #[proc_macro_derive(Component, attributes(component))]
 pub fn derive_component(input: TokenStream) -> TokenStream {
     expand(parse_macro_input!(input as DeriveInput))
@@ -38,14 +41,41 @@ fn expand(mut input: DeriveInput) -> syn::Result<Tokens> {
     }
 
     let mut storage = None;
+    let mut required = Vec::new();
+    let mut on_add = None;
+    let mut on_remove = None;
     for attribute in input
         .attrs
         .iter()
         .filter(|attr| attr.path().is_ident("component"))
     {
         attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("requires") {
+                let content;
+                parenthesized!(content in meta.input);
+                required
+                    .extend(content.parse_terminated(|input| input.parse::<Type>(), Token![,])?);
+                return Ok(());
+            }
+            let hook = if meta.path.is_ident("on_add") {
+                Some(&mut on_add)
+            } else if meta.path.is_ident("on_remove") {
+                Some(&mut on_remove)
+            } else {
+                None
+            };
+            if let Some(hook) = hook {
+                if hook.is_some() {
+                    return Err(Error::new_spanned(meta.path, "duplicate component hook"));
+                }
+                *hook = Some(meta.value()?.parse::<Path>()?);
+                return Ok(());
+            }
             if !meta.path.is_ident("storage") {
-                return Err(Error::new_spanned(meta.path, "expected `storage`"));
+                return Err(Error::new_spanned(
+                    meta.path,
+                    "expected `storage`, `requires`, `on_add`, or `on_remove`",
+                ));
             }
             if storage.is_some() {
                 return Err(Error::new_spanned(meta.path, "duplicate storage kind"));
@@ -67,6 +97,23 @@ fn expand(mut input: DeriveInput) -> syn::Result<Tokens> {
             const STORAGE: ::engine_ecs::StorageKind = ::engine_ecs::StorageKind::#storage;
         }
     });
+    let required_components = (!required.is_empty()).then(|| {
+        quote! {
+            const REQUIRED: &'static [::engine_ecs::RequiredComponent] = &[
+                #(::engine_ecs::RequiredComponent::new::<#required>()),*
+            ];
+        }
+    });
+    let hooks = [("ON_ADD", on_add), ("ON_REMOVE", on_remove)]
+        .into_iter()
+        .filter_map(|(name, hook)| {
+            let hook = hook?;
+            let name = Ident::new(name, proc_macro2::Span::call_site());
+            Some(quote! {
+                const #name: ::core::option::Option<::engine_ecs::ComponentHook> =
+                    ::core::option::Option::Some(#hook);
+            })
+        });
     input
         .generics
         .make_where_clause()
@@ -76,6 +123,8 @@ fn expand(mut input: DeriveInput) -> syn::Result<Tokens> {
     Ok(quote! {
         impl #impl_generics ::engine_ecs::Component for #name #type_generics #where_clause {
             #storage
+            #required_components
+            #(#hooks)*
         }
     })
 }
@@ -87,7 +136,7 @@ fn reject_component_attribute(attributes: &[Attribute]) -> syn::Result<()> {
     {
         return Err(Error::new_spanned(
             attribute,
-            "select storage on the component type",
+            "declare component options on the component type",
         ));
     }
     Ok(())
