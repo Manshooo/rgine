@@ -8,7 +8,7 @@ use engine_core::reflection::TypeKey;
 use crate::Entity;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Location {
+pub struct Location {
     pub(crate) archetype: usize,
     pub(crate) row: usize,
 }

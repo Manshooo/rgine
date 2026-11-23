@@ -2,11 +2,13 @@ use std::marker::PhantomData;
 
 use engine_core::reflection::TypeKey;
 
-use crate::storage::SparseIndex;
-use crate::{Component, Entity, StorageKind, World};
+use crate::archetype::Location;
+use crate::storage::{SparseIndex, Store};
+use crate::{Component, Entity, StorageKind, Tick, World};
 
 /// A type-level filter accepted by [`World::query_filtered`].
-/// Use [`With`], [`Without`], or a tuple of up to four filters combined with AND.
+/// Use [`With`], [`Without`], [`Added`], [`Changed`], or a tuple of up to
+/// four filters combined with AND.
 pub trait QueryFilter: Filter {}
 impl<F: Filter> QueryFilter for F {}
 
@@ -16,14 +18,21 @@ pub struct With<T>(PhantomData<fn() -> T>);
 /// Matches entities without `T`, without borrowing its values.
 pub struct Without<T>(PhantomData<fn() -> T>);
 
+/// Matches entities that acquired `T` within the query's tick window.
+pub struct Added<T>(PhantomData<fn() -> T>);
+
+/// Matches entities whose `T` was added, replaced or mutably borrowed within
+/// the query's tick window.
+pub struct Changed<T>(PhantomData<fn() -> T>);
+
 pub trait Filter {
     type State<'w>: Prepared;
-    fn prepare(world: &World) -> Self::State<'_>;
+    fn prepare(world: &World, last_run: Tick) -> Self::State<'_>;
 }
 
 pub trait Prepared {
     fn matches_archetype(&self, signature: &[TypeKey]) -> bool;
-    fn matches_entity(&self, entity: Entity) -> bool;
+    fn matches_entity(&self, entity: Entity, location: Location) -> bool;
 }
 
 enum Membership<'w> {
@@ -56,7 +65,7 @@ impl<const PRESENT: bool> Prepared for Presence<'_, PRESENT> {
         }
     }
 
-    fn matches_entity(&self, entity: Entity) -> bool {
+    fn matches_entity(&self, entity: Entity, _: Location) -> bool {
         match self.0 {
             Membership::Sparse(index) => index.get(entity).is_some() == PRESENT,
             _ => true,
@@ -67,7 +76,7 @@ impl<const PRESENT: bool> Prepared for Presence<'_, PRESENT> {
 impl<T: Component> Filter for With<T> {
     type State<'w> = Presence<'w, true>;
 
-    fn prepare(world: &World) -> Self::State<'_> {
+    fn prepare(world: &World, _: Tick) -> Self::State<'_> {
         Presence::for_type::<T>(world)
     }
 }
@@ -75,22 +84,68 @@ impl<T: Component> Filter for With<T> {
 impl<T: Component> Filter for Without<T> {
     type State<'w> = Presence<'w, false>;
 
-    fn prepare(world: &World) -> Self::State<'_> {
+    fn prepare(world: &World, _: Tick) -> Self::State<'_> {
         Presence::for_type::<T>(world)
+    }
+}
+
+pub struct Change<'w, T, const ADDED: bool> {
+    store: Option<&'w Store<T>>,
+    presence: Presence<'w, true>,
+    last_run: Tick,
+    now: Tick,
+}
+
+impl<T: Component, const ADDED: bool> Change<'_, T, ADDED> {
+    fn prepare(world: &World, last_run: Tick) -> Change<'_, T, ADDED> {
+        Change {
+            store: world.store::<T>(),
+            presence: Presence::for_type::<T>(world),
+            last_run,
+            now: world.tick(),
+        }
+    }
+}
+
+impl<T: Component, const ADDED: bool> Prepared for Change<'_, T, ADDED> {
+    fn matches_archetype(&self, signature: &[TypeKey]) -> bool {
+        self.store.is_some() && self.presence.matches_archetype(signature)
+    }
+
+    fn matches_entity(&self, entity: Entity, location: Location) -> bool {
+        self.store
+            .and_then(|store| store.ticks.get(store.row(entity, location)?))
+            .is_some_and(|ticks| ticks.matches::<ADDED>(self.last_run, self.now))
+    }
+}
+
+impl<T: Component> Filter for Added<T> {
+    type State<'w> = Change<'w, T, true>;
+
+    fn prepare(world: &World, last_run: Tick) -> Self::State<'_> {
+        Change::prepare(world, last_run)
+    }
+}
+
+impl<T: Component> Filter for Changed<T> {
+    type State<'w> = Change<'w, T, false>;
+
+    fn prepare(world: &World, last_run: Tick) -> Self::State<'_> {
+        Change::prepare(world, last_run)
     }
 }
 
 impl Filter for () {
     type State<'w> = ();
 
-    fn prepare(_: &World) -> Self::State<'_> {}
+    fn prepare(_: &World, _: Tick) -> Self::State<'_> {}
 }
 
 impl Prepared for () {
     fn matches_archetype(&self, _: &[TypeKey]) -> bool {
         true
     }
-    fn matches_entity(&self, _: Entity) -> bool {
+    fn matches_entity(&self, _: Entity, _: Location) -> bool {
         true
     }
 }
@@ -100,8 +155,8 @@ macro_rules! tuple_filter {
         impl<$($filter: Filter),+> Filter for ($($filter,)+) {
             type State<'w> = ($($filter::State<'w>,)+);
 
-            fn prepare(world: &World) -> Self::State<'_> {
-                ($($filter::prepare(world),)+)
+            fn prepare(world: &World, last_run: Tick) -> Self::State<'_> {
+                ($($filter::prepare(world, last_run),)+)
             }
         }
 
@@ -110,8 +165,8 @@ macro_rules! tuple_filter {
                 $(self.$index.matches_archetype(signature))&&+
             }
 
-            fn matches_entity(&self, entity: Entity) -> bool {
-                $(self.$index.matches_entity(entity))&&+
+            fn matches_entity(&self, entity: Entity, location: Location) -> bool {
+                $(self.$index.matches_entity(entity, location))&&+
             }
         }
     };

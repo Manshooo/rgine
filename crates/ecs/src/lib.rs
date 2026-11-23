@@ -15,10 +15,12 @@ mod component;
 mod entity;
 mod query;
 mod storage;
+mod tick;
 mod world;
 
 pub use component::{Component, ComponentMetadata, StorageKind};
 pub use engine_ecs_macros::Component;
 pub use entity::Entity;
-pub use query::{ComponentRef, Query, QueryData, QueryFilter, With, Without};
+pub use query::{Added, Changed, ComponentRef, Query, QueryData, QueryFilter, With, Without};
+pub use tick::Tick;
 pub use world::World;
