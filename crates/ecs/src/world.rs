@@ -8,10 +8,12 @@ use engine_core::{Reflect, TypeRegistry};
 
 use crate::archetype::{Archetypes, Edge, Location};
 use crate::entity::Entities;
+use crate::relation::Relations;
 use crate::storage::{SparseIndex, Store, Stores};
 use crate::{
     Commands, Component, ComponentHook, ComponentLifecycle, ComponentMetadata, ComponentRef,
-    Entity, Query, QueryData, QueryFilter, RequiredComponent, StorageKind, Tick,
+    Entity, Query, QueryData, QueryFilter, Relation, RelationError, RequiredComponent, StorageKind,
+    Tick,
 };
 
 /// Owner of entities and their components.
@@ -24,6 +26,7 @@ pub struct World {
     types: TypeRegistry,
     archetypes: Archetypes,
     stores: Stores,
+    relations: Relations,
     tick: Tick,
     hook_commands: Commands,
 }
@@ -35,13 +38,13 @@ impl World {
         Self::default()
     }
 
-    /// Returns the current simulation tick.
+    /// Returns the current ECS change tick.
     #[must_use]
     pub fn tick(&self) -> Tick {
         self.tick
     }
 
-    /// Advances the simulation clock and returns the new tick.
+    /// Advances the ECS change clock and returns the new tick.
     pub fn advance_tick(&mut self) -> Tick {
         self.tick = self.tick.next();
         if self.tick.needs_aging() {
@@ -71,6 +74,7 @@ impl World {
         if !self.entities.free(entity) {
             return false;
         }
+        self.relations.despawn(entity);
         let location = self.archetypes.location(entity);
         self.archetypes.detach(location);
         let mut hooks = Vec::new();
@@ -102,6 +106,43 @@ impl World {
     #[must_use]
     pub fn entity_count(&self) -> u32 {
         self.entities.len()
+    }
+
+    /// Adds an edge of type `R`. Returns whether the edge was new.
+    ///
+    /// An invalid endpoint or cycle leaves the relationship unchanged.
+    pub fn add_relation<R: Relation>(
+        &mut self,
+        source: Entity,
+        target: Entity,
+    ) -> Result<bool, RelationError> {
+        for entity in [source, target] {
+            if !self.contains(entity) {
+                return Err(RelationError::StaleEntity(entity));
+            }
+        }
+        self.relations.insert::<R>(source, target)
+    }
+
+    /// Removes an edge of type `R` if it exists.
+    pub fn remove_relation<R: Relation>(&mut self, source: Entity, target: Entity) -> bool {
+        self.relations.remove::<R>(source, target)
+    }
+
+    /// Visits the direct targets of an entity in entity handle order.
+    pub fn relation_targets<R: Relation>(
+        &self,
+        source: Entity,
+    ) -> impl Iterator<Item = Entity> + '_ {
+        self.relations.targets::<R>(source)
+    }
+
+    /// Visits the direct sources pointing at an entity in entity handle order.
+    pub fn relation_sources<R: Relation>(
+        &self,
+        target: Entity,
+    ) -> impl Iterator<Item = Entity> + '_ {
+        self.relations.sources::<R>(target)
     }
 
     /// The shared registry of schemas and component metadata for this world.

@@ -1,6 +1,7 @@
 //! winit-backed event loop.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use winit::{
     application::ApplicationHandler,
@@ -10,7 +11,11 @@ use winit::{
     window::{Window, WindowId as BackendWindowId},
 };
 
-use crate::{Command, Commands, Event, PlatformApp, PlatformError, WindowEvent, WindowId};
+use super::winit_input;
+use crate::{
+    Command, Commands, Event, InputEvent, InputTimestamp, PlatformApp, PlatformError, WindowEvent,
+    WindowId,
+};
 
 pub(crate) fn run<A: PlatformApp>(app: A) -> Result<(), PlatformError> {
     let event_loop =
@@ -39,6 +44,7 @@ struct Driver<A> {
     app: A,
     /// Events accumulated since the last `update`, flushed as one batch.
     events: Vec<Event>,
+    started: Instant,
     /// Kept across iterations so window handles stay unique for the whole run.
     commands: Commands,
     windows: HashMap<WindowId, Window>,
@@ -51,6 +57,7 @@ impl<A: PlatformApp> Driver<A> {
         Self {
             app,
             events: Vec::new(),
+            started: Instant::now(),
             commands: Commands::default(),
             windows: HashMap::new(),
             handles: HashMap::new(),
@@ -125,6 +132,7 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
         window_id: BackendWindowId,
         event: BackendWindowEvent,
     ) {
+        let received = self.started.elapsed();
         // A window closed by command is unmapped before the backend reports its
         // destruction, so events for it are dropped here instead of reaching the
         // application through a stale handle.
@@ -144,7 +152,16 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
                 self.windows.remove(&window);
                 WindowEvent::Destroyed
             }
-            _ => return,
+            input => {
+                if let Some(input) = winit_input::translate(input) {
+                    self.events.push(Event::Input(InputEvent {
+                        window,
+                        timestamp: InputTimestamp::Received(received),
+                        input,
+                    }));
+                }
+                return;
+            }
         };
 
         self.events.push(Event::Window { window, event });

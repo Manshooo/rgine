@@ -14,18 +14,40 @@ impl Clock {
         }
     }
 
-    pub fn tick(&mut self, fixed_dt: Duration) -> u32 {
+    /// Time since the last wall-clock sample, without changing the accumulator.
+    pub fn sample_elapsed(&mut self) -> Duration {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.last);
         self.last = now;
-        self.accumulator += elapsed;
+        elapsed
+    }
 
-        let mut steps = 0;
-        while self.accumulator >= fixed_dt {
-            self.accumulator -= fixed_dt;
-            steps += 1;
-        }
-        steps
+    /// Samples wall time and returns the number of complete fixed steps.
+    ///
+    /// # Panics
+    ///
+    /// If `fixed_dt` is zero.
+    pub fn tick(&mut self, fixed_dt: Duration) -> u32 {
+        let elapsed = self.sample_elapsed();
+        self.accumulate(elapsed, fixed_dt, u32::MAX)
+    }
+
+    /// Accumulates an explicit duration, returning at most `max_steps` steps.
+    /// Excess whole steps are discarded and the fractional remainder is kept.
+    ///
+    /// # Panics
+    ///
+    /// If `fixed_dt` is zero.
+    pub fn accumulate(&mut self, elapsed: Duration, fixed_dt: Duration, max_steps: u32) -> u32 {
+        assert!(!fixed_dt.is_zero(), "fixed timestep must be positive");
+        let nanos = self.accumulator.as_nanos() + elapsed.as_nanos();
+        let step = fixed_dt.as_nanos();
+        let remainder = nanos % step;
+        self.accumulator = Duration::new(
+            (remainder / 1_000_000_000) as u64,
+            (remainder % 1_000_000_000) as u32,
+        );
+        (nanos / step).min(u128::from(max_steps)) as u32
     }
 }
 
