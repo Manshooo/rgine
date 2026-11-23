@@ -6,7 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde.workspace = true
 winit.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 # android-activity refuses to compile unless a backend is selected, and the
 # choice belongs to whoever owns the platform layer rather than to winit.

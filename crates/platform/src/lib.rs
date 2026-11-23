@@ -11,10 +11,15 @@ mod backend;
 mod command;
 mod error;
 mod event;
+mod input;
 mod window;
 
 pub use app::{PlatformApp, run};
 pub use command::{Command, Commands};
 pub use error::PlatformError;
 pub use event::{Event, WindowEvent};
+pub use input::{
+    Input, InputEvent, InputTimestamp, KeyCode, MouseButton, NativeKeyCode, PhysicalKey,
+    ScrollDelta, TouchPhase,
+};
 pub use window::{WindowDesc, WindowId};

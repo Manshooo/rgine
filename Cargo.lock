@@ -364,6 +364,8 @@ version = "0.1.0"
 name = "engine-platform"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "winit",
 ]
 

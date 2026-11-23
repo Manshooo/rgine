@@ -5,5 +5,6 @@
 //! surface.
 
 mod winit_backend;
+mod winit_input;
 
 pub(crate) use winit_backend::run;

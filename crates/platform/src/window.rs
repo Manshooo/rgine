@@ -1,11 +1,13 @@
 //! Window handles and descriptions.
 
+use serde::{Deserialize, Serialize};
+
 /// An opaque handle to a window owned by the platform layer.
 ///
 /// Callers hold the handle; the platform owns the window itself. Handles are
 /// allocated by [`Commands::create_windows`](crate::Commands::create_windows)
 /// and stay valid until the matching [`WindowEvent::Destroyed`](crate::WindowEvent::Destroyed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct WindowId(u64);
 
 impl WindowId {
