@@ -8,3 +8,7 @@ rust-version.workspace = true
 [dependencies]
 engine-core.workspace = true
 engine-ecs-macros.workspace = true
+
+[[bench]]
+name = "fixed_update"
+harness = false

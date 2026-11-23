@@ -283,6 +283,8 @@ dependencies = [
  "engine-core",
  "engine-ecs",
  "engine-platform",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

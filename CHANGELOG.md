@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Fixed-step input recording and headless replay with a versioned format. CI compares replayed world state and measures ECS updates at 1,000 and 100,000 entities (ADR 0013).
 - Serializable physical keyboard, mouse, and touch input in platform event batches. The winit backend stamps inputs when its callback receives them.
 - App plugins register components, resources, and systems. The same fixed-step simulation runs in the windowed app and headlessly, with a configurable catch-up limit.
 - A single-threaded ECS schedule runs systems in registration order and applies commands at explicit stage boundaries (ADR 0012).

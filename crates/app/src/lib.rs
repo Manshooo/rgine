@@ -9,8 +9,10 @@
 pub use engine_core as core;
 pub use engine_ecs as ecs;
 pub use engine_platform as platform;
+pub use replay::{InputRecording, ReplayError};
 pub use simulation::{FixedStep, Resources, Simulation, StepContext};
 
+mod replay;
 mod simulation;
 
 use engine_ecs::{Schedule, StageId, Tick, World};
@@ -96,7 +98,19 @@ impl App {
 
     /// Runs the application until its window is closed.
     pub fn run(self) -> Result<(), PlatformError> {
-        engine_platform::run(Runner::new(self))
+        engine_platform::run(&mut Runner::new(self))
+    }
+
+    /// Runs the windowed simulation and returns its input recording when the
+    /// event loop exits successfully. Some mobile event loops never return.
+    pub fn run_recorded(self) -> Result<InputRecording, PlatformError> {
+        let mut runner = Runner::new(self);
+        runner.simulation.start_recording();
+        engine_platform::run(&mut runner)?;
+        Ok(runner
+            .simulation
+            .finish_recording()
+            .expect("recording started before the event loop"))
     }
 }
 
@@ -115,9 +129,6 @@ impl Runner {
             simulation: app.simulation,
         }
     }
-}
-
-impl PlatformApp for Runner {
     fn update(&mut self, events: &[Event], commands: &mut Commands) {
         let elapsed = self.simulation.clock.sample_elapsed();
         let mut active = !self.open.is_empty();
@@ -132,6 +143,7 @@ impl PlatformApp for Runner {
                 }
                 Event::Suspended => {
                     active = false;
+                    self.simulation.discard_pending_input();
                     commands.close_windows(&self.open);
                     self.open.clear();
                 }
@@ -142,12 +154,21 @@ impl PlatformApp for Runner {
                     active = false;
                     commands.exit();
                 }
+                Event::Input(input) if active && self.open.contains(&input.window) => {
+                    self.simulation.queue_input(std::iter::once(*input));
+                }
                 _ => {}
             }
         }
         if active {
             self.simulation.advance(elapsed);
         }
+    }
+}
+
+impl PlatformApp for &mut Runner {
+    fn update(&mut self, events: &[Event], commands: &mut Commands) {
+        Runner::update(self, events, commands);
     }
 }
 
