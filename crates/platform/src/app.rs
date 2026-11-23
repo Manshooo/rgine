@@ -1,6 +1,6 @@
 //! The application-side contract of the platform layer.
 
-use crate::{Commands, Event, PlatformError, backend};
+use crate::{Commands, Event, PlatformError, SurfaceEvent, backend};
 
 /// The application driven by the platform event loop.
 ///
@@ -13,6 +13,10 @@ pub trait PlatformApp {
     /// `events` may be empty. Commands recorded into `commands` are applied
     /// after this call returns.
     fn update(&mut self, events: &[Event], commands: &mut Commands);
+
+    /// Receives drawable creation and invalidation before control returns to
+    /// the OS. Simulation and ordinary window events still arrive in batches.
+    fn surface_event(&mut self, _event: SurfaceEvent) {}
 }
 
 /// Runs `app` on the platform event loop until it records

@@ -12,10 +12,9 @@ const EDITOR_SIDE: &[&str] = &["engine-editor", "engine-devtools"];
 
 /// Backend crates, and the single workspace crate allowed to name each.
 ///
-/// ADR 0009: a caller that names a backend type has already lost the ability to
-/// replace that backend. Extend this as backends land - `wgpu` under `render`,
-/// a physics backend under `physics`, an audio one under `audio`.
-const BACKEND_OWNERS: &[(&str, &str)] = &[("winit", "engine-platform")];
+/// ADR 0009 and ADR 0014 keep windowing and rendering backends replaceable.
+/// Extend the ownership table as the remaining backends land.
+const BACKEND_OWNERS: &[(&str, &str)] = &[("winit", "engine-platform"), ("wgpu", "engine-render")];
 
 /// Proc-macro crates and their re-exporting owners (ADR 0011).
 const MACRO_OWNERS: &[(&str, &str)] = &[
@@ -212,8 +211,7 @@ mod tests {
         }
     }
 
-    /// The shape the workspace is meant to have: apps on top, `platform` alone
-    /// naming the windowing backend.
+    /// The workspace shape with apps on top and each backend in its owner.
     fn clean_workspace() -> Graph {
         Graph::new(vec![
             krate(
@@ -232,6 +230,11 @@ mod tests {
                 "engine-platform",
                 "crates/platform/Cargo.toml",
                 &[dependency("winit", DependencyKind::Normal)],
+            ),
+            krate(
+                "engine-render",
+                "crates/render/Cargo.toml",
+                &[dependency("wgpu", DependencyKind::Development)],
             ),
             krate(
                 "engine-app",

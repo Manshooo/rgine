@@ -1,6 +1,58 @@
 //! Window handles and descriptions.
 
+use std::{fmt, sync::Arc};
+
+use raw_window_handle::{
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+};
 use serde::{Deserialize, Serialize};
+
+trait SurfaceHandles: HasDisplayHandle + HasWindowHandle + Send + Sync {}
+
+impl<T: HasDisplayHandle + HasWindowHandle + Send + Sync> SurfaceHandles for T {}
+
+/// Owned native handle source for a renderer's surface.
+///
+/// The renderer must drop all copies and surfaces using them on invalidation.
+#[derive(Clone)]
+pub struct SurfaceSource(Arc<dyn SurfaceHandles>);
+
+impl fmt::Debug for SurfaceSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SurfaceSource")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SurfaceSource {
+    pub(crate) fn new<T: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static>(
+        window: Arc<T>,
+    ) -> Self {
+        Self(window)
+    }
+}
+
+impl HasDisplayHandle for SurfaceSource {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        self.0.display_handle()
+    }
+}
+
+impl HasWindowHandle for SurfaceSource {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        self.0.window_handle()
+    }
+}
+
+/// A drawable lifetime transition delivered synchronously by the platform.
+#[non_exhaustive]
+pub enum SurfaceEvent {
+    /// The window now has a native source and initial size in physical pixels.
+    Available(WindowId, SurfaceSource, [u32; 2]),
+    /// Drop this window's surface and native source before the callback returns.
+    Invalidating(WindowId),
+}
 
 /// An opaque handle to a window owned by the platform layer.
 ///
