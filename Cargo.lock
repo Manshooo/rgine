@@ -326,6 +326,19 @@ version = "0.1.0"
 [[package]]
 name = "engine-ecs"
 version = "0.1.0"
+dependencies = [
+ "engine-core",
+ "engine-ecs-macros",
+]
+
+[[package]]
+name = "engine-ecs-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "engine-editor"

@@ -3,15 +3,20 @@
 
 //! The runtime entity-component-system: entities, storage, queries, scheduling.
 //!
-//! The data model is [ADR 0010]. Phase 1 builds it in the order the decisions
-//! depend on each other, starting with entity identity: everything else in the
-//! crate is indexed by [`Entity`], so the handle has to be settled before the
-//! first component column exists.
+//! The data model is [ADR 0010]. [`World`] stores table components in dense
+//! archetype columns and sparse components in separate sets.
 //!
 //! [ADR 0010]: https://github.com/Manshooo/rgine/blob/master/docs/adr/0010-ecs-data-model.md
 
+extern crate self as engine_ecs;
+
+mod archetype;
+mod component;
 mod entity;
+mod storage;
 mod world;
 
+pub use component::{Component, ComponentMetadata, StorageKind};
+pub use engine_ecs_macros::Component;
 pub use entity::Entity;
 pub use world::World;
