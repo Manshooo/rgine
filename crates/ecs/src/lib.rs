@@ -13,10 +13,12 @@ extern crate self as engine_ecs;
 mod archetype;
 mod component;
 mod entity;
+mod query;
 mod storage;
 mod world;
 
 pub use component::{Component, ComponentMetadata, StorageKind};
 pub use engine_ecs_macros::Component;
 pub use entity::Entity;
+pub use query::{ComponentRef, Query, QueryData, QueryFilter, With, Without};
 pub use world::World;
