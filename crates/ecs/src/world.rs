@@ -38,13 +38,13 @@ impl World {
         Self::default()
     }
 
-    /// Returns the current simulation tick.
+    /// Returns the current ECS change tick.
     #[must_use]
     pub fn tick(&self) -> Tick {
         self.tick
     }
 
-    /// Advances the simulation clock and returns the new tick.
+    /// Advances the ECS change clock and returns the new tick.
     pub fn advance_tick(&mut self) -> Tick {
         self.tick = self.tick.next();
         if self.tick.needs_aging() {
