@@ -11,6 +11,7 @@
 extern crate self as engine_ecs;
 
 mod archetype;
+mod commands;
 mod component;
 mod entity;
 mod query;
@@ -18,6 +19,7 @@ mod storage;
 mod tick;
 mod world;
 
+pub use commands::{Commands, SpawnCommands};
 pub use component::{Component, ComponentMetadata, StorageKind};
 pub use engine_ecs_macros::Component;
 pub use entity::Entity;
