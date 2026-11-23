@@ -3,6 +3,8 @@ use std::fmt;
 use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
+use crate::graph::{CompiledGraph, GraphError, RenderGraph};
+
 /// A GPU or surface failure reported without exposing backend types.
 #[derive(Debug)]
 pub struct RenderError(String);
@@ -36,6 +38,7 @@ pub struct Drawable {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    frame_graph: CompiledGraph<()>,
     size: [u32; 2],
     needs_configure: bool,
 }
@@ -44,6 +47,7 @@ impl Drawable {
     /// Initializes the GPU backend for a live surface. Call outside native
     /// lifecycle callbacks, since adapter and device creation can block.
     pub fn new(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
+        let frame_graph = clear_graph().map_err(|error| RenderError(error.to_string()))?;
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(source.clone())),
         );
@@ -67,6 +71,7 @@ impl Drawable {
             adapter,
             device,
             queue,
+            frame_graph,
             size,
             needs_configure: true,
         })
@@ -139,18 +144,7 @@ impl Drawable {
 
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        }));
+        self.encode_frame(&mut encoder, &view, wgpu::Color { r, g, b, a })?;
         self.queue.submit([encoder.finish()]);
         self.source.pre_present_notify();
         self.queue.present(frame);
@@ -162,6 +156,49 @@ impl Drawable {
         );
         Ok(DrawOutcome::Presented)
     }
+
+    fn encode_frame(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        color: wgpu::Color,
+    ) -> Result<(), RenderError> {
+        let [backbuffer] = self.frame_graph.exports() else {
+            return Err(RenderError(
+                "the frame graph must export one backbuffer".into(),
+            ));
+        };
+        self.frame_graph.execute(|pass| {
+            if pass.writes() != [*backbuffer] {
+                return Err(RenderError(format!(
+                    "frame pass {:?} does not target the backbuffer",
+                    pass.name()
+                )));
+            }
+            drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(pass.name()),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            }));
+            Ok(())
+        })
+    }
+}
+
+fn clear_graph() -> Result<CompiledGraph<()>, GraphError> {
+    let mut graph = RenderGraph::new();
+    let backbuffer = graph.import("backbuffer");
+    graph.add_pass("clear backbuffer", &[], &[backbuffer], ());
+    graph.export(backbuffer);
+    graph.compile()
 }
 
 fn create_surface(

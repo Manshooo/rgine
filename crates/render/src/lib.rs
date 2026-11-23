@@ -3,6 +3,7 @@
 //! GPU frame rendering. Native surfaces and wgpu objects stay behind this API.
 
 mod drawable;
+pub mod graph;
 
 pub use drawable::{DrawOutcome, Drawable, RenderError};
 
