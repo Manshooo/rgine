@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/core",
+    "crates/core-macros",
     "crates/ecs",
     "crates/platform",
     "crates/render",
@@ -33,6 +34,7 @@ homepage = "https://github.com/Manshooo/rgine"
 # a release bumps it once. A path dependency without a version reads as a
 # wildcard requirement, which `cargo deny` rejects for a publishable crate.
 engine-core = { path = "crates/core", version = "0.1.0" }
+engine-core-macros = { path = "crates/core-macros", version = "=0.1.0" }
 engine-ecs = { path = "crates/ecs", version = "0.1.0" }
 engine-platform = { path = "crates/platform", version = "0.1.0" }
 engine-app = { path = "crates/app", version = "0.1.0" }
@@ -43,3 +45,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 winit = "0.30"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
