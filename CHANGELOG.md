@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- A wgpu 30.0.2 surface example exercises clear-color presentation, resize and recreation through the platform's native drawable lifecycle (ADR 0014).
 - Fixed-step input recording and headless replay with a versioned format. CI compares replayed world state and measures ECS updates at 1,000 and 100,000 entities (ADR 0013).
 - Serializable physical keyboard, mouse, and touch input in platform event batches. The winit backend stamps inputs when its callback receives them.
 - App plugins register components, resources, and systems. The same fixed-step simulation runs in the windowed app and headlessly, with a configurable catch-up limit.
@@ -46,6 +47,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
+- The workspace minimum Rust version is 1.87 to support wgpu 30.0.2 (ADR 0014).
 - `World::get` returns a `ComponentRef` guard so the shared borrow stays active while the reference is in use. Dereference the guard or use `Option::as_deref()` at call sites that need `Option<&T>`.
 - ADR 0010 is `Accepted`. It was recorded as `Proposed` when the model was written; phase 1 now implements it, and an issue carrying `needs-adr` does not start against a proposal.
 - `engine-app` drives the event loop through `engine-platform` instead of `winit`. `App::run` now returns `Result<(), PlatformError>`; it previously returned `Result<(), winit::error::EventLoopError>`.

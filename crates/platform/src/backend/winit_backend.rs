@@ -1,6 +1,7 @@
 //! winit-backed event loop.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use winit::{
@@ -13,8 +14,8 @@ use winit::{
 
 use super::winit_input;
 use crate::{
-    Command, Commands, Event, InputEvent, InputTimestamp, PlatformApp, PlatformError, WindowEvent,
-    WindowId,
+    Command, Commands, Event, InputEvent, InputTimestamp, PlatformApp, PlatformError, SurfaceEvent,
+    SurfaceSource, WindowEvent, WindowId,
 };
 
 pub(crate) fn run<A: PlatformApp>(app: A) -> Result<(), PlatformError> {
@@ -47,7 +48,7 @@ struct Driver<A> {
     started: Instant,
     /// Kept across iterations so window handles stay unique for the whole run.
     commands: Commands,
-    windows: HashMap<WindowId, Window>,
+    windows: HashMap<WindowId, Arc<Window>>,
     handles: HashMap<BackendWindowId, WindowId>,
     error: Option<PlatformError>,
 }
@@ -78,6 +79,13 @@ impl<A: PlatformApp> Driver<A> {
             .create_window(attributes)
             .map_err(|error| PlatformError::WindowCreation(error.to_string()))?;
 
+        let created = Arc::new(created);
+        let size = created.inner_size();
+        self.app.surface_event(SurfaceEvent::Available(
+            window,
+            SurfaceSource::new(Arc::clone(&created)),
+            [size.width, size.height],
+        ));
         self.handles.insert(created.id(), window);
         self.windows.insert(window, created);
         Ok(())
@@ -92,6 +100,7 @@ impl<A: PlatformApp> Driver<A> {
             }
             Command::CloseWindow(window) => {
                 if let Some(closed) = self.windows.remove(&window) {
+                    self.app.surface_event(SurfaceEvent::Invalidating(window));
                     self.handles.remove(&closed.id());
                     drop(closed);
                     self.events.push(Event::Window {
@@ -123,7 +132,16 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        for &window in self.windows.keys() {
+            self.app.surface_event(SurfaceEvent::Invalidating(window));
+        }
         self.events.push(Event::Suspended);
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        for &window in self.windows.keys() {
+            self.app.surface_event(SurfaceEvent::Invalidating(window));
+        }
     }
 
     fn window_event(
@@ -148,6 +166,7 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
                 height: size.height,
             },
             BackendWindowEvent::Destroyed => {
+                self.app.surface_event(SurfaceEvent::Invalidating(window));
                 self.handles.remove(&window_id);
                 self.windows.remove(&window);
                 WindowEvent::Destroyed

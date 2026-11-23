@@ -1,6 +1,6 @@
 # Project status
-**Date**: 2026-09-02
-**Milestone**: 0 - Foundation, complete. Next: 1 - ECS + App Loop
+**Date**: 2026-11-23
+**Milestone**: 1 - ECS + App Loop, complete. Next: 2 - Render v1
 **Version**: 0.1.0-dev
 
 ## Phase 0 exit
@@ -14,7 +14,7 @@ The cross-cutting iteration budget criterion in ROADMAP is not enforced yet; see
 ## Done
 - [x] Cargo workspace skeleton
 - [x] Domain/app crate boundaries
-- [x] Rust toolchain policy, MSRV 1.85 checked by CI
+- [x] Rust toolchain policy and a CI job for the minimum supported Rust version
 - [x] Dual MIT OR Apache-2.0 licensing
 - [x] Repository name and canonical URL: `rgine`, https://github.com/Manshooo/rgine
 - [x] ADR structure
@@ -33,15 +33,18 @@ The cross-cutting iteration budget criterion in ROADMAP is not enforced yet; see
 - [x] Iteration budgets defined in ROADMAP
 - [x] An empty window that opens and closes cleanly
 
-## Next
-Phase 1 - ECS + App Loop:
+## Phase 1 exit
 
-- [ ] Implement type registry and reflection derive (ADR 0003) - blocks the first serialized type
-- [ ] Implement real ECS storage: archetype + sparse, relations, required components, hooks
-- [ ] Stages, fixed timestep, change detection, Plugin API
-- [ ] Deterministic input record and replay
+- The fixed-update benchmark measures 1,000 and 100,000 entities in CI. On the local Windows run, the median at 1,000 entities was 1.81 µs per update.
+- The deterministic replay test records and serializes input, then verifies that replay produces the same world state. The `engine-app` and `engine-ecs` test suites passed locally.
+- The type registry and reflection derive, archetype and sparse storage, filtered queries, change detection, deferred commands, relationships, required components and hooks are in `master`. The app runs the deterministic ECS schedule with fixed steps, plugins and input recording.
+- [Issue #23](https://github.com/Manshooo/rgine/issues/23) tracks native OS timestamps as follow-up work. The current input adapter supplies monotonic receipt timestamps with explicit provenance.
+
+## Next
+
+Phase 2 uses wgpu 30.0.2 with minimum Rust 1.87. [ADR 0014](docs/adr/0014-render-backend-and-surface-lifetime.md) is accepted and the [surface spike](https://github.com/Manshooo/rgine/issues/37) exercises the platform contract. [Frame integration](https://github.com/Manshooo/rgine/issues/38) is next in the [Render v1 milestone](https://github.com/Manshooo/rgine/milestone/3).
 
 ## Deferred
-- [ ] Iteration budget harness in CI. Nothing measurable exists yet - there is no renderer, and the editor prints a line - so the harness would report the cold start of a stub and the rebuild time of an empty crate. It lands with the first phase whose budgets have content.
+- [ ] Iteration budget harness in CI. The ECS benchmark reports fixed-update timing. Phase 2 will establish which renderer iteration budgets can be measured and enforced.
 - [ ] `engine-cli new` creating a project from `templates/`. Not required by the phase 0 exit criterion; it belongs with the launcher and packaging work in phase 6, or earlier if the templates are needed to test the asset pipeline.
 - [ ] Public API and schema snapshot checks (ADR 0005), due with phase 7.

@@ -22,4 +22,4 @@ pub use input::{
     Input, InputEvent, InputTimestamp, KeyCode, MouseButton, NativeKeyCode, PhysicalKey,
     ScrollDelta, TouchPhase,
 };
-pub use window::{WindowDesc, WindowId};
+pub use window::{SurfaceEvent, SurfaceSource, WindowDesc, WindowId};

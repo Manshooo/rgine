@@ -30,7 +30,7 @@ impl Tick {
     }
 
     pub(crate) const fn needs_aging(self) -> bool {
-        self.0 % AGING_INTERVAL == 0
+        self.0.is_multiple_of(AGING_INTERVAL)
     }
 
     fn in_window(self, last_run: Self, now: Self) -> bool {
