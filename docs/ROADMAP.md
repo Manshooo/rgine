@@ -56,12 +56,21 @@ GUID, .meta, import cache, glTF, KTX2, RON, migrations, prefabs, hot reload.
 **Exit**: save/load round-trip, live scene reload, and a three-way merge of two divergent edits to one scene resolved without manual fixing.
 
 ## Phase 4. Physics + 3D Platformer
-Rapier adapter, character controller, interpolation, checkpoints, coins, mobile controls.
+Rapier adapter, character controller, interpolation, checkpoints, coins, mobile controls, game UI.
 
 - data-driven behaviour: configs, curves, state machines and tuning values in RON with hot reload. This is the deliverable, not a script API;
 - no scripting layer and no visual scripting (ADR 0007). Reassess against the trigger conditions recorded there at the end of Phase 3.
 
-**Exit**: playable prototype on desktop + Android. Gameplay tuning and behaviour data can be changed and reloaded without rebuilding.
+**Exit**: playable prototype on desktop + Android with a live coin counter and a pause menu. Gameplay data, UI layouts and styles can be reloaded without rebuilding or restarting the game.
+
+### Game UI
+
+2D support covers the screen-space game interface. `engine-ui` keeps a tree of widgets built from XML layouts and styled with a documented subset of CSS. The authoring workflow follows [Valve Panorama](https://www.dota2.com/reborn/part2).
+
+- Layouts define reusable panels, labels, images and buttons. Styles define spacing, sizing, row and column layout, alignment, typography and interaction states. Layout adapts to the viewport and display scale.
+- UI widgets bind to data published by the game. Named actions from the layout are dispatched as typed Rust events. For example, the HUD reads the coin count, and the pause menu emits a resume action.
+- The game renders the UI over the 3D scene. UI handles pointer and touch input and keyboard focus. Input handled by a widget is kept out of gameplay controls.
+- Layouts and styles are assets that reload during development. A failed reload reports the source error and keeps the last valid UI active.
 
 ## Phase 5. Editor
 Hierarchy, Inspector, Viewport, gizmos, selection, Asset Browser, Console, Undo/Redo, isolated Play World.

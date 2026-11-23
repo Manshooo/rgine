@@ -1,6 +1,6 @@
 # rgine
 
-Модульный 2D/3D игровой движок на Rust с ECS-архитектурой.
+Модульный 3D-движок на Rust с ECS-архитектурой. Поддержка 2D ограничена игровым UI: HUD, меню и экранными элементами управления.
 
 ## Цели MVP
 
@@ -12,6 +12,7 @@
 - GUID-based asset pipeline;
 - RON scenes/prefabs + migrations;
 - egui editor;
+- [декларативный игровой UI с веб-подобной вёрсткой](docs/ROADMAP.md#game-ui);
 - launcher;
 - CLI-first workflow;
 - тестовый 3D platformer.
