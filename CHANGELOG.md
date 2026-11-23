@@ -7,6 +7,8 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- `engine-core` type registry and `Reflect` derive for struct fields, enum variants and schema versions (ADR 0003). Editor labels, tooltips and field ranges are available with the `editor-metadata` feature.
+- `cargo xtask check-deps` checks ownership of `engine-core-macros` (ADR 0011).
 - ADR 0003: type registry and reflection.
 - ADR 0004: authoring data model, splitting `Truth` from the runtime ECS `World`.
 - ADR 0005: compatibility and versioning policy.

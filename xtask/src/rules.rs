@@ -17,6 +17,16 @@ const EDITOR_SIDE: &[&str] = &["engine-editor", "engine-devtools"];
 /// a physics backend under `physics`, an audio one under `audio`.
 const BACKEND_OWNERS: &[(&str, &str)] = &[("winit", "engine-platform")];
 
+/// Proc-macro crates and their re-exporting owners (ADR 0011).
+const MACRO_OWNERS: &[(&str, &str)] = &[("engine-core-macros", "engine-core")];
+
+struct OwnershipRule {
+    kind: &'static str,
+    table_rule: &'static str,
+    naming_rule: &'static str,
+    owners: &'static [(&'static str, &'static str)],
+}
+
 /// One broken boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
@@ -34,7 +44,26 @@ pub fn check(graph: &Graph) -> Vec<Violation> {
     let mut violations = Vec::new();
     editor_side_is_unreachable(graph, &mut violations);
     domain_crates_do_not_depend_on_apps(graph, &mut violations);
-    backends_are_named_only_by_their_owner(graph, &mut violations);
+    check_ownership(
+        graph,
+        &mut violations,
+        OwnershipRule {
+            kind: "backend",
+            table_rule: "the backend ownership table is current",
+            naming_rule: "backends are named only by the crate that owns them",
+            owners: BACKEND_OWNERS,
+        },
+    );
+    check_ownership(
+        graph,
+        &mut violations,
+        OwnershipRule {
+            kind: "macro crate",
+            table_rule: "the macro ownership table is current",
+            naming_rule: "macro crates are named only by the crate that owns them",
+            owners: MACRO_OWNERS,
+        },
+    );
     violations
 }
 
@@ -103,30 +132,31 @@ fn domain_crates_do_not_depend_on_apps(graph: &Graph, violations: &mut Vec<Viola
     }
 }
 
-/// A backend crate is named only by the crate that owns it (ADR 0009).
+/// A backend or derive crate is named only by the crate that owns it.
 ///
 /// Every dependency table counts, including target-specific ones: a backend
 /// named only for Android is still named.
-fn backends_are_named_only_by_their_owner(graph: &Graph, violations: &mut Vec<Violation>) {
-    for &(backend, owner) in BACKEND_OWNERS {
+fn check_ownership(graph: &Graph, violations: &mut Vec<Violation>, rule: OwnershipRule) {
+    let kind = rule.kind;
+    for &(owned, owner) in rule.owners {
         // A rule that silently stops applying is worse than no rule, so the
         // table is checked against the workspace before it is enforced.
         match graph.get(owner) {
             None => violations.push(Violation {
-                rule: "the backend ownership table is current",
+                rule: rule.table_rule,
                 detail: format!(
-                    "`{backend}` is recorded as owned by `{owner}`, which is not a workspace crate"
+                    "`{owned}` is recorded as owned by `{owner}`, which is not a workspace crate"
                 ),
-                remedy: format!("update the owner of `{backend}` in xtask, or drop the entry"),
+                remedy: format!("update the owner of `{owned}` in xtask, or drop the entry"),
             }),
-            Some(owner_crate) if owner_crate.names(backend).is_none() => {
+            Some(owner_crate) if owner_crate.names(owned).is_none() => {
                 violations.push(Violation {
-                    rule: "the backend ownership table is current",
+                    rule: rule.table_rule,
                     detail: format!(
-                        "`{owner}` is recorded as the owner of `{backend}` but no longer depends on it"
+                        "`{owner}` is recorded as the owner of `{owned}` but no longer depends on it"
                     ),
                     remedy: format!(
-                        "drop the entry for `{backend}` in xtask, or point it at the crate that owns it now"
+                        "drop the entry for `{owned}` in xtask, or point it at the crate that owns it now"
                     ),
                 })
             }
@@ -137,20 +167,20 @@ fn backends_are_named_only_by_their_owner(graph: &Graph, violations: &mut Vec<Vi
             if member.name == owner {
                 continue;
             }
-            let Some(dependency) = member.names(backend) else {
+            let Some(dependency) = member.names(owned) else {
                 continue;
             };
 
             violations.push(Violation {
-                rule: "backends are named only by the crate that owns them",
+                rule: rule.naming_rule,
                 detail: format!(
-                    "`{}` names the backend `{backend}` in {} ({})",
+                    "`{}` names the {kind} `{owned}` in {} ({})",
                     member.name,
                     dependency.table(),
                     member.manifest_path
                 ),
                 remedy: format!(
-                    "`{owner}` owns `{backend}`; expose what `{}` needs from `{owner}` instead",
+                    "`{owner}` owns `{owned}`; expose what `{}` needs from `{owner}` instead",
                     member.name
                 ),
             });
@@ -183,7 +213,12 @@ mod tests {
     /// naming the windowing backend.
     fn clean_workspace() -> Graph {
         Graph::new(vec![
-            krate("engine-core", "crates/core/Cargo.toml", &[]),
+            krate(
+                "engine-core",
+                "crates/core/Cargo.toml",
+                &[dependency("engine-core-macros", DependencyKind::Normal)],
+            ),
+            krate("engine-core-macros", "crates/core-macros/Cargo.toml", &[]),
             krate(
                 "engine-platform",
                 "crates/platform/Cargo.toml",
@@ -330,6 +365,23 @@ mod tests {
     }
 
     #[test]
+    fn a_macro_crate_can_only_be_named_by_its_owner() {
+        let graph = with_extra(
+            "engine-app",
+            dependency("engine-core-macros", DependencyKind::Development),
+        );
+        let violations = check(&graph);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].rule,
+            "macro crates are named only by the crate that owns them"
+        );
+        assert!(violations[0].detail.contains(
+            "`engine-app` names the macro crate `engine-core-macros` in [dev-dependencies]"
+        ));
+    }
+
+    #[test]
     fn an_owner_that_no_longer_uses_its_backend_is_reported_as_a_stale_table() {
         let members: Vec<Crate> = clean_workspace()
             .members()
@@ -351,7 +403,11 @@ mod tests {
 
     #[test]
     fn an_owner_that_is_not_a_workspace_crate_is_reported_as_a_stale_table() {
-        let graph = Graph::new(vec![krate("engine-core", "crates/core/Cargo.toml", &[])]);
+        let graph = Graph::new(vec![krate(
+            "engine-core",
+            "crates/core/Cargo.toml",
+            &[dependency("engine-core-macros", DependencyKind::Normal)],
+        )]);
 
         let violations = check(&graph);
 
