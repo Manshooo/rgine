@@ -8,10 +8,10 @@ use std::{fmt, ops::Deref};
 
 use crate::archetype::Location;
 use crate::storage::{Row, Storage, Store};
-use crate::{Component, Entity, World};
+use crate::{Component, Entity, Tick, World};
 use filter::Prepared;
 
-pub use filter::{QueryFilter, With, Without};
+pub use filter::{Added, Changed, QueryFilter, With, Without};
 
 /// The component references requested by a query.
 ///
@@ -80,11 +80,11 @@ pub struct Query<'w, D: QueryData, F: QueryFilter = ()> {
 }
 
 impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
-    pub(crate) fn new(world: &'w World) -> Self {
+    pub(crate) fn new(world: &'w World, last_run: Tick) -> Self {
         Self {
             world,
             access: D::borrow(world),
-            filter: F::prepare(world),
+            filter: F::prepare(world, last_run),
         }
     }
 
@@ -100,10 +100,13 @@ impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
             let Some(mut batch) = D::batch(&mut self.access, id) else {
                 continue;
             };
-            for &entity in entities {
-                let item = D::next(&mut batch, entity);
-                if let Some(item) = item.filter(|_| self.filter.matches_entity(entity)) {
-                    visit(entity, item);
+            for (row, &entity) in entities.iter().enumerate() {
+                if let Some((item, changes)) = D::next(&mut batch, entity) {
+                    let location = Location { archetype: id, row };
+                    if self.filter.matches_entity(entity, location) {
+                        D::mark_changed(changes, self.world.tick());
+                        visit(entity, item);
+                    }
                 }
             }
         }
@@ -114,7 +117,7 @@ impl<'w, D: QueryData, F: QueryFilter> Query<'w, D, F> {
         (self
             .filter
             .matches_archetype(self.world.signature(location.archetype))
-            && self.filter.matches_entity(entity))
+            && self.filter.matches_entity(entity, location))
         .then_some(location)
     }
 }
@@ -140,14 +143,23 @@ impl<T: Component, F: QueryFilter> Query<'_, &mut T, F> {
             .get(access.store.row(entity, self.location(entity)?)?)
     }
 
-    /// Mutably borrows the component of one matching, live entity.
+    /// Mutably borrows and marks changed the component of one matching, live entity.
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut T> {
         let location = self.location(entity)?;
         let access = self.access.as_mut()?;
-        access.values.get_mut(access.store.row(entity, location)?)
+        let row = access.store.row(entity, location)?;
+        let value = access.values.get_mut(row)?;
+        access
+            .store
+            .ticks
+            .get(row)
+            .expect("component ticks")
+            .mark_changed(self.world.tick());
+        Some(value)
     }
 
-    /// Mutably borrows components in the order of the supplied entities.
+    /// Mutably borrows components in the order of the supplied entities and
+    /// marks them changed if the entire borrow succeeds.
     ///
     /// Returns `None` for repeated entities, stale handles, missing components
     /// or entities excluded by the filter. The empty input always succeeds.
@@ -163,6 +175,14 @@ impl<T: Component, F: QueryFilter> Query<'_, &mut T, F> {
         for (row, entity) in rows.iter_mut().zip(entities) {
             *row = store.row(entity, self.location(entity)?)?;
         }
-        self.access.as_mut()?.values.get_disjoint_mut(rows)
+        let values = self.access.as_mut()?.values.get_disjoint_mut(rows)?;
+        for row in rows {
+            store
+                .ticks
+                .get(row)
+                .expect("component ticks")
+                .mark_changed(self.world.tick());
+        }
+        Some(values)
     }
 }

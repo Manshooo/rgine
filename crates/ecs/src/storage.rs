@@ -8,7 +8,8 @@ use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 use engine_core::reflection::TypeKey;
 
 use crate::archetype::Location;
-use crate::{Component, Entity, StorageKind};
+use crate::tick::ComponentTicks;
+use crate::{Component, Entity, StorageKind, Tick};
 
 #[derive(Default)]
 pub(crate) struct Stores(BTreeMap<TypeKey, Box<dyn ErasedStorage>>);
@@ -50,6 +51,12 @@ impl Stores {
             .move_row(from, to);
     }
 
+    pub(crate) fn age_ticks(&mut self, now: Tick) {
+        for store in self.0.values_mut() {
+            store.age_ticks(now);
+        }
+    }
+
     pub(crate) fn despawn(&mut self, entity: Entity, location: Location, signature: &[TypeKey]) {
         // Leave every store consistent before running a component's destructor.
         let mut removed = Vec::with_capacity(signature.len());
@@ -76,6 +83,7 @@ trait ErasedStorage: Send + Sync {
     fn move_row(&mut self, from: Location, to: usize);
     fn take_row(&mut self, location: Location) -> Box<dyn Any>;
     fn take_sparse(&mut self, entity: Entity) -> Option<Box<dyn Any>>;
+    fn age_ticks(&mut self, now: Tick);
 }
 
 /// The sparse index only changes during structural edits with an exclusive
@@ -83,6 +91,7 @@ trait ErasedStorage: Send + Sync {
 pub(crate) struct Store<T> {
     pub(crate) index: Option<SparseIndex>,
     values: RwLock<Storage<T>>,
+    pub(crate) ticks: Storage<ComponentTicks>,
 }
 
 impl<T: Component> Store<T> {
@@ -91,10 +100,12 @@ impl<T: Component> Store<T> {
             StorageKind::Table => Self {
                 index: None,
                 values: RwLock::new(Storage::Table(BTreeMap::new())),
+                ticks: Storage::Table(BTreeMap::new()),
             },
             StorageKind::Sparse => Self {
                 index: Some(SparseIndex::default()),
                 values: RwLock::new(Storage::Sparse(Vec::new())),
+                ticks: Storage::Sparse(Vec::new()),
             },
         }
     }
@@ -114,58 +125,74 @@ impl<T: Component> Store<T> {
         }
     }
 
-    fn values_mut(&mut self) -> &mut Storage<T> {
-        self.values
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    pub(crate) fn get_mut(&mut self, entity: Entity, location: Location) -> Option<&mut T> {
+    pub(crate) fn get_mut(
+        &mut self,
+        entity: Entity,
+        location: Location,
+        now: Tick,
+    ) -> Option<&mut T> {
         let row = self.row(entity, location)?;
-        self.values_mut().get_mut(row)
+        let value = exclusive(&mut self.values).get_mut(row)?;
+        self.ticks
+            .get(row)
+            .expect("component ticks")
+            .mark_changed(now);
+        Some(value)
     }
 
-    pub(crate) fn table_mut(&mut self, archetype: usize) -> &mut Vec<T> {
-        let Storage::Table(columns) = self.values_mut() else {
+    pub(crate) fn push_table(&mut self, archetype: usize, value: T, now: Tick) {
+        self.push_table_row(archetype, value, ComponentTicks::new(now));
+    }
+
+    fn push_table_row(&mut self, archetype: usize, value: T, ticks: ComponentTicks) {
+        exclusive(&mut self.values).table_mut(archetype).push(value);
+        self.ticks.table_mut(archetype).push(ticks);
+    }
+
+    fn take_table_row(&mut self, location: Location) -> Option<(T, ComponentTicks)> {
+        let Storage::Table(values) = exclusive(&mut self.values) else {
             unreachable!("table component storage")
         };
-        columns.entry(archetype).or_default()
+        let values = values.get_mut(&location.archetype)?;
+        let ticks = self.ticks.table_mut(location.archetype);
+        Some((
+            values.swap_remove(location.row),
+            ticks.swap_remove(location.row),
+        ))
     }
 
-    pub(crate) fn insert_sparse(&mut self, entity: Entity, value: T) -> Option<T> {
+    pub(crate) fn insert_sparse(&mut self, entity: Entity, value: T, now: Tick) -> Option<T> {
         let index = self.index.as_mut().expect("sparse component index");
-        let Storage::Sparse(values) = self
-            .values
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-        else {
+        let Storage::Sparse(values) = exclusive(&mut self.values) else {
             unreachable!("sparse component storage")
         };
+        let Storage::Sparse(ticks) = &mut self.ticks else {
+            unreachable!("sparse component ticks")
+        };
         if let Some(row) = index.get(entity) {
+            ticks[row].mark_changed(now);
             return Some(std::mem::replace(&mut values[row], value));
         }
         index.rows.insert(entity, values.len());
         index.entities.push(entity);
         values.push(value);
+        ticks.push(ComponentTicks::new(now));
         None
     }
 
     pub(crate) fn take(&mut self, entity: Entity, location: Location) -> Option<T> {
         if let Some(index) = &mut self.index {
             let row = index.remove(entity)?;
-            let Storage::Sparse(values) = self.values_mut() else {
+            let Storage::Sparse(values) = exclusive(&mut self.values) else {
                 unreachable!("sparse component storage")
             };
+            let Storage::Sparse(ticks) = &mut self.ticks else {
+                unreachable!("sparse component ticks")
+            };
+            ticks.swap_remove(row);
             return Some(values.swap_remove(row));
         }
-        let Storage::Table(columns) = self.values_mut() else {
-            unreachable!("table component storage")
-        };
-        Some(
-            columns
-                .get_mut(&location.archetype)?
-                .swap_remove(location.row),
-        )
+        self.take_table_row(location).map(|(value, _)| value)
     }
 }
 
@@ -183,12 +210,13 @@ impl<T: Component> ErasedStorage for Store<T> {
     }
 
     fn move_row(&mut self, from: Location, to: usize) {
-        let value = self.table_mut(from.archetype).swap_remove(from.row);
-        self.table_mut(to).push(value);
+        let (value, ticks) = self.take_table_row(from).expect("table component row");
+        self.push_table_row(to, value, ticks);
     }
 
     fn take_row(&mut self, location: Location) -> Box<dyn Any> {
-        Box::new(self.table_mut(location.archetype).swap_remove(location.row))
+        let (value, _) = self.take_table_row(location).expect("table component row");
+        Box::new(value)
     }
 
     fn take_sparse(&mut self, entity: Entity) -> Option<Box<dyn Any>> {
@@ -196,6 +224,26 @@ impl<T: Component> ErasedStorage for Store<T> {
         self.take(entity, Location::default())
             .map(|value| Box::new(value) as Box<dyn Any>)
     }
+
+    fn age_ticks(&mut self, now: Tick) {
+        match &mut self.ticks {
+            Storage::Table(columns) => {
+                for ticks in columns.values_mut().flatten() {
+                    ticks.age(now);
+                }
+            }
+            Storage::Sparse(rows) => {
+                for ticks in rows {
+                    ticks.age(now);
+                }
+            }
+        }
+    }
+}
+
+fn exclusive<T>(lock: &mut RwLock<T>) -> &mut T {
+    lock.get_mut()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn borrow_values<T: Component, G>(borrow: Result<G, TryLockError<G>>) -> G {
@@ -233,6 +281,13 @@ pub(crate) enum Storage<T> {
 }
 
 impl<T> Storage<T> {
+    fn table_mut(&mut self, id: usize) -> &mut Vec<T> {
+        let Self::Table(columns) = self else {
+            unreachable!("table component storage")
+        };
+        columns.entry(id).or_default()
+    }
+
     pub(crate) fn get(&self, row: Row) -> Option<&T> {
         match (self, row) {
             (Self::Table(columns), Row::Table(location)) => {

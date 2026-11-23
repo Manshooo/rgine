@@ -8,6 +8,7 @@ use crate::entity::Entities;
 use crate::storage::{SparseIndex, Store, Stores};
 use crate::{
     Component, ComponentMetadata, ComponentRef, Entity, Query, QueryData, QueryFilter, StorageKind,
+    Tick,
 };
 
 /// Owner of entities and their components.
@@ -20,6 +21,7 @@ pub struct World {
     types: TypeRegistry,
     archetypes: Archetypes,
     stores: Stores,
+    tick: Tick,
 }
 
 impl World {
@@ -27,6 +29,22 @@ impl World {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns the current simulation tick.
+    #[must_use]
+    pub fn tick(&self) -> Tick {
+        self.tick
+    }
+
+    /// Advances the simulation clock and returns the new tick.
+    pub fn advance_tick(&mut self) -> Tick {
+        self.tick = self.tick.next();
+        if self.tick.needs_aging() {
+            // Bound the age of stored timestamps before the clock wraps.
+            self.stores.age_ticks(self.tick);
+        }
+        self.tick
     }
 
     /// Creates an entity with no components and returns its handle.
@@ -103,9 +121,9 @@ impl World {
         let key = self.register_component::<T>().key();
         let store = self.stores.ensure::<T>(key);
         if T::STORAGE == StorageKind::Sparse {
-            return Ok(store.insert_sparse(entity, component));
+            return Ok(store.insert_sparse(entity, component, self.tick));
         }
-        if let Some(previous) = store.get_mut(entity, location) {
+        if let Some(previous) = store.get_mut(entity, location, self.tick) {
             return Ok(Some(std::mem::replace(previous, component)));
         }
 
@@ -113,7 +131,9 @@ impl World {
             .archetypes
             .transition(location.archetype, key, Edge::Add);
         self.move_columns(location, to, None);
-        self.stores.ensure::<T>(key).table_mut(to).push(component);
+        self.stores
+            .ensure::<T>(key)
+            .push_table(to, component, self.tick);
         self.archetypes.move_entity(location, to);
         Ok(None)
     }
@@ -147,11 +167,13 @@ impl World {
         ComponentRef::new(store, store.row(entity, location)?)
     }
 
-    /// Mutably borrows a component for a single entity.
+    /// Mutably borrows a component and marks it changed at the current tick.
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
         let location = self.location(entity)?;
         let key = self.types.get::<T>()?.key();
-        self.stores.get_mut::<T>(key)?.get_mut(entity, location)
+        self.stores
+            .get_mut::<T>(key)?
+            .get_mut(entity, location, self.tick)
     }
 
     /// Borrows the component types in `D` for iteration and entity access.
@@ -164,13 +186,27 @@ impl World {
     }
 
     /// Borrows component types like [`World::query`] and limits matching
-    /// entities with presence filters.
+    /// entities with filters. Change filters match the current tick.
     ///
     /// # Panics
     ///
     /// If `D` or a live query has an incompatible borrow of the same type.
     pub fn query_filtered<D: QueryData, F: QueryFilter>(&self) -> Query<'_, D, F> {
-        Query::new(self)
+        self.query_filtered_since::<D, F>(self.tick.previous())
+    }
+
+    /// Borrows components with filters that observe changes after `last_run`
+    /// through the current tick, inclusive. Start with [`Tick::ZERO`] and
+    /// retain a tick from this same world for subsequent system runs.
+    ///
+    /// # Panics
+    ///
+    /// If `D` or a live query has an incompatible borrow of the same type.
+    pub fn query_filtered_since<D: QueryData, F: QueryFilter>(
+        &self,
+        last_run: Tick,
+    ) -> Query<'_, D, F> {
+        Query::new(self, last_run)
     }
 
     pub(crate) fn query_archetypes(&self) -> impl Iterator<Item = (&[TypeKey], &[Entity])> {
@@ -207,6 +243,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Added, Changed};
 
     #[derive(Component, Reflect, Debug, PartialEq)]
     #[reflect(version = 2)]
@@ -219,6 +256,33 @@ mod tests {
     #[derive(Component, Debug, PartialEq)]
     #[component(storage = "sparse")]
     struct Selected<T>(T);
+
+    #[test]
+    fn change_filters_cross_world_tick_wraparound() {
+        let mut world = World {
+            tick: Tick::INITIAL.previous().previous().previous(),
+            ..World::default()
+        };
+        let old = world.spawn_empty();
+        world.insert(old, Position(1)).unwrap();
+        let last_run = world.tick();
+
+        assert_eq!(world.advance_tick(), Tick::INITIAL.previous().previous());
+        let new = world.spawn_empty();
+        world.insert(new, Position(2)).unwrap();
+        assert_eq!(world.advance_tick(), Tick::ZERO);
+        world.get_mut::<Position>(old).unwrap().0 = 3;
+
+        let changes = world.query_filtered_since::<&Position, Changed<Position>>(last_run);
+        assert_eq!(changes.get(old), Some(&Position(3)));
+        assert_eq!(changes.get(new), Some(&Position(2)));
+        let additions = world.query_filtered_since::<&Position, Added<Position>>(last_run);
+        assert!(additions.get(old).is_none());
+        assert_eq!(additions.get(new), Some(&Position(2)));
+        let current = world.query_filtered::<&Position, Changed<Position>>();
+        assert!(current.get(old).is_some());
+        assert!(current.get(new).is_none());
+    }
 
     #[test]
     fn spawned_entity_is_contained_until_despawned() {
