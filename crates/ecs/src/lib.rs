@@ -15,6 +15,7 @@ mod commands;
 mod component;
 mod entity;
 mod query;
+mod relation;
 mod storage;
 mod tick;
 mod world;
@@ -26,5 +27,6 @@ pub use component::{
 pub use engine_ecs_macros::Component;
 pub use entity::Entity;
 pub use query::{Added, Changed, ComponentRef, Query, QueryData, QueryFilter, With, Without};
+pub use relation::{ChildOf, Relation, RelationError};
 pub use tick::Tick;
 pub use world::World;

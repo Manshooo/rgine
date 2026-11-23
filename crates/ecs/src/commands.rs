@@ -2,9 +2,9 @@
 
 use std::fmt;
 
-use crate::{Component, Entity, World};
+use crate::{Component, Entity, Relation, World};
 
-type ComponentEdit = Box<dyn FnOnce(&mut World, Entity) + Send + Sync>;
+type EntityEdit = Box<dyn FnOnce(&mut World, Entity) + Send + Sync>;
 
 enum Target {
     Existing(Entity),
@@ -14,7 +14,7 @@ enum Target {
 enum Command {
     Spawn,
     Despawn(Entity),
-    Edit(Target, ComponentEdit),
+    Edit(Target, EntityEdit),
 }
 
 /// A queue of structural changes recorded by systems during a stage.
@@ -60,6 +60,21 @@ impl Commands {
         self.queue.push(Command::Edit(
             Target::Existing(entity),
             Box::new(|world, entity| drop(world.remove::<T>(entity))),
+        ));
+    }
+
+    /// Queues a relationship. Stale endpoints and cycles leave it unchanged.
+    pub fn add_relation<R: Relation>(&mut self, source: Entity, target: Entity) {
+        self.queue_relation::<R>(Target::Existing(source), target);
+    }
+
+    /// Queues removal of a relationship if it exists.
+    pub fn remove_relation<R: Relation>(&mut self, source: Entity, target: Entity) {
+        self.queue.push(Command::Edit(
+            Target::Existing(source),
+            Box::new(move |world, source| {
+                world.remove_relation::<R>(source, target);
+            }),
         ));
     }
 
@@ -109,6 +124,15 @@ impl Commands {
             Box::new(move |world, entity| drop(world.insert(entity, component))),
         ));
     }
+
+    fn queue_relation<R: Relation>(&mut self, source: Target, target: Entity) {
+        self.queue.push(Command::Edit(
+            source,
+            Box::new(move |world, source| {
+                let _ = world.add_relation::<R>(source, target);
+            }),
+        ));
+    }
 }
 
 /// Records initial components for a spawn queued by [`Commands::spawn_empty`].
@@ -120,6 +144,12 @@ impl SpawnCommands<'_> {
     /// Queues an insertion on the new entity and returns the builder for chaining.
     pub fn insert<T: Component>(&mut self, component: T) -> &mut Self {
         self.commands.queue_insert(Target::LastSpawn, component);
+        self
+    }
+
+    /// Queues a relationship from the new entity to an existing target.
+    pub fn add_relation<R: Relation>(&mut self, target: Entity) -> &mut Self {
+        self.commands.queue_relation::<R>(Target::LastSpawn, target);
         self
     }
 }
