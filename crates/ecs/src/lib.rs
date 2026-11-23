@@ -20,7 +20,9 @@ mod tick;
 mod world;
 
 pub use commands::{Commands, SpawnCommands};
-pub use component::{Component, ComponentMetadata, StorageKind};
+pub use component::{
+    Component, ComponentHook, ComponentLifecycle, ComponentMetadata, RequiredComponent, StorageKind,
+};
 pub use engine_ecs_macros::Component;
 pub use entity::Entity;
 pub use query::{Added, Changed, ComponentRef, Query, QueryData, QueryFilter, With, Without};

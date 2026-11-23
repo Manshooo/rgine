@@ -57,7 +57,13 @@ impl Stores {
         }
     }
 
-    pub(crate) fn despawn(&mut self, entity: Entity, location: Location, signature: &[TypeKey]) {
+    pub(crate) fn despawn(
+        &mut self,
+        entity: Entity,
+        location: Location,
+        signature: &[TypeKey],
+        mut record_removal: impl FnMut(TypeKey),
+    ) -> Vec<Box<dyn Any>> {
         // Leave every store consistent before running a component's destructor.
         let mut removed = Vec::with_capacity(signature.len());
         for key in signature {
@@ -67,12 +73,15 @@ impl Stores {
                     .expect("table component store")
                     .take_row(location),
             );
+            record_removal(*key);
         }
-        removed.extend(
-            self.0
-                .values_mut()
-                .filter_map(|store| store.take_sparse(entity)),
-        );
+        for (&key, store) in &mut self.0 {
+            if let Some(value) = store.take_sparse(entity) {
+                removed.push(value);
+                record_removal(key);
+            }
+        }
+        removed
     }
 }
 

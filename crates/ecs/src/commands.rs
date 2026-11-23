@@ -1,8 +1,10 @@
 //! Deferred structural changes for an ECS stage.
 
+use std::fmt;
+
 use crate::{Component, Entity, World};
 
-type ComponentEdit = Box<dyn FnOnce(&mut World, Entity) + Send>;
+type ComponentEdit = Box<dyn FnOnce(&mut World, Entity) + Send + Sync>;
 
 enum Target {
     Existing(Entity),
@@ -24,6 +26,14 @@ enum Command {
 #[derive(Default)]
 pub struct Commands {
     queue: Vec<Command>,
+}
+
+impl fmt::Debug for Commands {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commands")
+            .field("len", &self.queue.len())
+            .finish()
+    }
 }
 
 impl Commands {
@@ -59,7 +69,20 @@ impl Commands {
     /// already reused its index. Apply the queue to the world that supplied
     /// its existing entity handles. Changes are recorded at that world's
     /// current tick.
+    ///
+    /// After the recorded commands, applies one batch of commands queued by
+    /// component hooks. Hooks from that batch can queue work for the next
+    /// boundary. An empty queue can still apply pending hook commands.
     pub fn apply(&mut self, world: &mut World) {
+        self.apply_recorded(world);
+        world.take_hook_commands().apply_recorded(world);
+    }
+
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        self.queue.append(&mut other.queue);
+    }
+
+    fn apply_recorded(&mut self, world: &mut World) {
         let mut last_spawn = None;
         for command in self.queue.drain(..) {
             match command {

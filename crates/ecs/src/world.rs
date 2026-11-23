@@ -1,5 +1,8 @@
 //! The container every entity and component lives in.
 
+use std::any::TypeId;
+use std::collections::HashSet;
+
 use engine_core::reflection::{TypeKey, TypeRegistration};
 use engine_core::{Reflect, TypeRegistry};
 
@@ -7,8 +10,8 @@ use crate::archetype::{Archetypes, Edge, Location};
 use crate::entity::Entities;
 use crate::storage::{SparseIndex, Store, Stores};
 use crate::{
-    Component, ComponentMetadata, ComponentRef, Entity, Query, QueryData, QueryFilter, StorageKind,
-    Tick,
+    Commands, Component, ComponentHook, ComponentLifecycle, ComponentMetadata, ComponentRef,
+    Entity, Query, QueryData, QueryFilter, RequiredComponent, StorageKind, Tick,
 };
 
 /// Owner of entities and their components.
@@ -22,6 +25,7 @@ pub struct World {
     archetypes: Archetypes,
     stores: Stores,
     tick: Tick,
+    hook_commands: Commands,
 }
 
 impl World {
@@ -61,17 +65,30 @@ impl World {
     /// Returns whether the entity existed. A handle to an entity that was
     /// already despawned is rejected rather than despawning whatever now
     /// occupies its index.
+    ///
+    /// Removal hooks run after the entity and all of its components are gone.
     pub fn despawn(&mut self, entity: Entity) -> bool {
         if !self.entities.free(entity) {
             return false;
         }
         let location = self.archetypes.location(entity);
         self.archetypes.detach(location);
-        self.stores.despawn(
+        let mut hooks = Vec::new();
+        let types = &self.types;
+        let removed = self.stores.despawn(
             entity,
             location,
             self.archetypes.signature(location.archetype),
+            |key| {
+                let hook = types
+                    .get_by_key(key)
+                    .and_then(TypeRegistration::metadata::<ComponentLifecycle>)
+                    .and_then(|lifecycle| lifecycle.on_remove);
+                hooks.extend(hook);
+            },
         );
+        self.run_hooks(entity, hooks);
+        drop(removed);
         true
     }
 
@@ -107,6 +124,13 @@ impl World {
             entry.insert_metadata(ComponentMetadata {
                 storage: T::STORAGE,
             });
+            if !T::REQUIRED.is_empty() || T::ON_ADD.is_some() || T::ON_REMOVE.is_some() {
+                entry.insert_metadata(ComponentLifecycle {
+                    required: T::REQUIRED,
+                    on_add: T::ON_ADD,
+                    on_remove: T::ON_REMOVE,
+                });
+            }
             self.stores.ensure::<T>(entry.key());
         }
         entry
@@ -114,17 +138,50 @@ impl World {
 
     /// Inserts a component, returning its previous value if one existed.
     /// Returns the input unchanged as `Err` if `entity` is no longer alive.
+    ///
+    /// Fills missing requirements transitively while preserving existing
+    /// values. Add hooks run after all requirements are present. Replacing
+    /// a component does not call its add hook again.
     pub fn insert<T: Component>(&mut self, entity: Entity, component: T) -> Result<Option<T>, T> {
         let Some(location) = self.location(entity) else {
             return Err(component);
         };
+        let previous = self.insert_value(entity, location, component);
+        if !T::REQUIRED.is_empty() || (previous.is_none() && T::ON_ADD.is_some()) {
+            let mut hooks = Vec::new();
+            if !T::REQUIRED.is_empty() {
+                // The set is used only for membership. The stack walks
+                // requirements depth-first in declaration order.
+                let mut visited = HashSet::from([TypeId::of::<T>()]);
+                let mut pending: Vec<_> = T::REQUIRED.iter().rev().collect();
+                while let Some(required) = pending.pop() {
+                    if visited.insert(required.type_id()) {
+                        let children = (required.install)(self, entity, &mut hooks);
+                        pending.extend(children.iter().rev());
+                    }
+                }
+            }
+            if previous.is_none() {
+                hooks.extend(T::ON_ADD);
+            }
+            self.run_hooks(entity, hooks);
+        }
+        Ok(previous)
+    }
+
+    fn insert_value<T: Component>(
+        &mut self,
+        entity: Entity,
+        location: Location,
+        component: T,
+    ) -> Option<T> {
         let key = self.register_component::<T>().key();
         let store = self.stores.ensure::<T>(key);
         if T::STORAGE == StorageKind::Sparse {
-            return Ok(store.insert_sparse(entity, component, self.tick));
+            return store.insert_sparse(entity, component, self.tick);
         }
         if let Some(previous) = store.get_mut(entity, location, self.tick) {
-            return Ok(Some(std::mem::replace(previous, component)));
+            return Some(std::mem::replace(previous, component));
         }
 
         let to = self
@@ -135,7 +192,20 @@ impl World {
             .ensure::<T>(key)
             .push_table(to, component, self.tick);
         self.archetypes.move_entity(location, to);
-        Ok(None)
+        None
+    }
+
+    pub(crate) fn insert_required<T: Component + Default>(
+        &mut self,
+        entity: Entity,
+        hooks: &mut Vec<ComponentHook>,
+    ) -> &'static [RequiredComponent] {
+        if self.get::<T>(entity).is_none() {
+            let location = self.archetypes.location(entity);
+            self.insert_value(entity, location, T::default());
+            hooks.extend(T::ON_ADD);
+        }
+        T::REQUIRED
     }
 
     /// Removes and returns a component. Missing components and stale entities
@@ -151,6 +221,7 @@ impl World {
             self.move_columns(location, to, Some(key));
             self.archetypes.move_entity(location, to);
         }
+        self.run_hooks(entity, T::ON_REMOVE);
         Some(previous)
     }
 
@@ -229,6 +300,18 @@ impl World {
         self.entities
             .contains(entity)
             .then(|| self.archetypes.location(entity))
+    }
+
+    pub(crate) fn take_hook_commands(&mut self) -> Commands {
+        std::mem::take(&mut self.hook_commands)
+    }
+
+    fn run_hooks(&mut self, entity: Entity, hooks: impl IntoIterator<Item = ComponentHook>) {
+        let mut commands = Commands::default();
+        for hook in hooks {
+            hook(self, entity, &mut commands);
+        }
+        self.hook_commands.append(&mut commands);
     }
 
     fn move_columns(&mut self, from: Location, to: usize, removed: Option<TypeKey>) {
