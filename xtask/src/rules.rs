@@ -18,7 +18,10 @@ const EDITOR_SIDE: &[&str] = &["engine-editor", "engine-devtools"];
 const BACKEND_OWNERS: &[(&str, &str)] = &[("winit", "engine-platform")];
 
 /// Proc-macro crates and their re-exporting owners (ADR 0011).
-const MACRO_OWNERS: &[(&str, &str)] = &[("engine-core-macros", "engine-core")];
+const MACRO_OWNERS: &[(&str, &str)] = &[
+    ("engine-core-macros", "engine-core"),
+    ("engine-ecs-macros", "engine-ecs"),
+];
 
 struct OwnershipRule {
     kind: &'static str,
@@ -220,6 +223,12 @@ mod tests {
             ),
             krate("engine-core-macros", "crates/core-macros/Cargo.toml", &[]),
             krate(
+                "engine-ecs",
+                "crates/ecs/Cargo.toml",
+                &[dependency("engine-ecs-macros", DependencyKind::Normal)],
+            ),
+            krate("engine-ecs-macros", "crates/ecs-macros/Cargo.toml", &[]),
+            krate(
                 "engine-platform",
                 "crates/platform/Cargo.toml",
                 &[dependency("winit", DependencyKind::Normal)],
@@ -403,11 +412,14 @@ mod tests {
 
     #[test]
     fn an_owner_that_is_not_a_workspace_crate_is_reported_as_a_stale_table() {
-        let graph = Graph::new(vec![krate(
-            "engine-core",
-            "crates/core/Cargo.toml",
-            &[dependency("engine-core-macros", DependencyKind::Normal)],
-        )]);
+        let graph = Graph::new(
+            clean_workspace()
+                .members()
+                .iter()
+                .filter(|member| member.name != "engine-platform")
+                .cloned()
+                .collect(),
+        );
 
         let violations = check(&graph);
 

@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/core-macros",
     "crates/ecs",
+    "crates/ecs-macros",
     "crates/platform",
     "crates/render",
     "crates/physics",
@@ -36,6 +37,7 @@ homepage = "https://github.com/Manshooo/rgine"
 engine-core = { path = "crates/core", version = "0.1.0" }
 engine-core-macros = { path = "crates/core-macros", version = "=0.1.0" }
 engine-ecs = { path = "crates/ecs", version = "0.1.0" }
+engine-ecs-macros = { path = "crates/ecs-macros", version = "=0.1.0" }
 engine-platform = { path = "crates/platform", version = "0.1.0" }
 engine-app = { path = "crates/app", version = "0.1.0" }
 
