@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- ECS `Commands` defer entity spawns, despawns, and component edits until the stage boundary. Commands apply in recording order and skip stale entity handles (ADR 0010).
 - Tick-based ECS change detection. `Added` and `Changed` queries match the current tick or a window since a system's previous run, including across tick wraparound.
 - `engine-ecs` queries borrow whole component types and visit archetypes in creation order. Queries support shared and mutable component references, `With` and `Without` filters, and disjoint mutable access by entity.
 - `engine-core` type registry and `Reflect` derive for struct fields, enum variants and schema versions (ADR 0003). Editor labels, tooltips and field ranges are available with the `editor-metadata` feature.
