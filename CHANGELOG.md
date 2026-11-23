@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- App plugins register components, resources, and systems. The same fixed-step simulation runs in the windowed app and headlessly, with a configurable catch-up limit.
 - A single-threaded ECS schedule runs systems in registration order and applies commands at explicit stage boundaries (ADR 0012).
 - Typed ECS relationships with a reverse index and cycle rejection. `ChildOf` uses the same storage and limits each child to one parent (ADR 0010).
 - ECS components can declare required defaults and add/remove hooks on their shared type registration. Hooks observe the completed structural change and can queue follow-up commands (ADR 0010).
