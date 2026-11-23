@@ -1,3 +1,9 @@
-//! {engine-render}: bootstrap crate for rgine.
+#![forbid(unsafe_code)]
+
+//! GPU frame rendering. Native surfaces and wgpu objects stay behind this API.
+
+mod drawable;
+
+pub use drawable::{DrawOutcome, Drawable, RenderError};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -7,9 +7,9 @@ use raw_window_handle::{
 };
 use serde::{Deserialize, Serialize};
 
-trait SurfaceHandles: HasDisplayHandle + HasWindowHandle + Send + Sync {}
-
-impl<T: HasDisplayHandle + HasWindowHandle + Send + Sync> SurfaceHandles for T {}
+pub(crate) trait SurfaceHandles: HasDisplayHandle + HasWindowHandle + Send + Sync {
+    fn pre_present_notify(&self);
+}
 
 /// Owned native handle source for a renderer's surface.
 ///
@@ -26,10 +26,13 @@ impl fmt::Debug for SurfaceSource {
 }
 
 impl SurfaceSource {
-    pub(crate) fn new<T: HasDisplayHandle + HasWindowHandle + Send + Sync + 'static>(
-        window: Arc<T>,
-    ) -> Self {
+    pub(crate) fn new(window: Arc<dyn SurfaceHandles>) -> Self {
         Self(window)
+    }
+
+    /// Notifies the platform just before a frame is presented.
+    pub fn pre_present_notify(&self) {
+        self.0.pre_present_notify();
     }
 }
 

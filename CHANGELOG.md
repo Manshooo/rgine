@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The windowed App loop can present GPU frames on redraw and release its drawable on suspension. Run `cargo run --locked -p engine-app --example clear_window` for the clear-color example (ADR 0014).
 - A wgpu 30.0.2 surface example exercises clear-color presentation, resize and recreation through the platform's native drawable lifecycle (ADR 0014).
 - Fixed-step input recording and headless replay with a versioned format. CI compares replayed world state and measures ECS updates at 1,000 and 100,000 entities (ADR 0013).
 - Serializable physical keyboard, mouse, and touch input in platform event batches. The winit backend stamps inputs when its callback receives them.
