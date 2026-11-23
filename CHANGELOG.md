@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- `engine-ecs` queries borrow whole component types and visit archetypes in creation order. Queries support shared and mutable component references, `With` and `Without` filters, and disjoint mutable access by entity.
 - `engine-core` type registry and `Reflect` derive for struct fields, enum variants and schema versions (ADR 0003). Editor labels, tooltips and field ranges are available with the `editor-metadata` feature.
 - `cargo xtask check-deps` checks ownership of `engine-core-macros` and `engine-ecs-macros` (ADR 0011).
 - `engine-ecs` component registration and `Component` derive. Component storage kind is tracked in the shared type registry, and `World` stores components in dense archetype columns or sparse sets (ADR 0010).
@@ -37,6 +38,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
+- `World::get` returns a `ComponentRef` guard so the shared borrow stays active while the reference is in use. Dereference the guard or use `Option::as_deref()` at call sites that need `Option<&T>`.
 - ADR 0010 is `Accepted`. It was recorded as `Proposed` when the model was written; phase 1 now implements it, and an issue carrying `needs-adr` does not start against a proposal.
 - `engine-app` drives the event loop through `engine-platform` instead of `winit`. `App::run` now returns `Result<(), PlatformError>`; it previously returned `Result<(), winit::error::EventLoopError>`.
 - `engine-platform` selects `winit`'s `android-native-activity` feature when targeting Android. The Android CI job could not build `android-activity` without it.

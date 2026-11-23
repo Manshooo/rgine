@@ -5,8 +5,10 @@ use engine_core::{Reflect, TypeRegistry};
 
 use crate::archetype::{Archetypes, Edge, Location};
 use crate::entity::Entities;
-use crate::storage::{Storage, Stores};
-use crate::{Component, ComponentMetadata, Entity, StorageKind};
+use crate::storage::{SparseIndex, Store, Stores};
+use crate::{
+    Component, ComponentMetadata, ComponentRef, Entity, Query, QueryData, QueryFilter, StorageKind,
+};
 
 /// Owner of entities and their components.
 ///
@@ -87,6 +89,7 @@ impl World {
             entry.insert_metadata(ComponentMetadata {
                 storage: T::STORAGE,
             });
+            self.stores.ensure::<T>(entry.key());
         }
         entry
     }
@@ -99,8 +102,8 @@ impl World {
         };
         let key = self.register_component::<T>().key();
         let store = self.stores.ensure::<T>(key);
-        if let Storage::Sparse(set) = store {
-            return Ok(set.insert(entity, component));
+        if T::STORAGE == StorageKind::Sparse {
+            return Ok(store.insert_sparse(entity, component));
         }
         if let Some(previous) = store.get_mut(entity, location) {
             return Ok(Some(std::mem::replace(previous, component)));
@@ -131,12 +134,17 @@ impl World {
         Some(previous)
     }
 
-    /// Borrows a component for a single entity.
+    /// Borrows a component for a single entity. The shared borrow stays alive
+    /// until the returned guard is dropped.
+    ///
+    /// # Panics
+    ///
+    /// If the component type is already mutably borrowed by a query.
     #[must_use]
-    pub fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
+    pub fn get<T: Component>(&self, entity: Entity) -> Option<ComponentRef<'_, T>> {
         let location = self.location(entity)?;
-        let key = self.types.get::<T>()?.key();
-        self.stores.get::<T>(key)?.get(entity, location)
+        let store = self.store::<T>()?;
+        ComponentRef::new(store, store.row(entity, location)?)
     }
 
     /// Mutably borrows a component for a single entity.
@@ -146,7 +154,42 @@ impl World {
         self.stores.get_mut::<T>(key)?.get_mut(entity, location)
     }
 
-    fn location(&self, entity: Entity) -> Option<Location> {
+    /// Borrows the component types in `D` for iteration and entity access.
+    ///
+    /// # Panics
+    ///
+    /// If `D` or a live query has an incompatible borrow of the same type.
+    pub fn query<D: QueryData>(&self) -> Query<'_, D> {
+        self.query_filtered::<D, ()>()
+    }
+
+    /// Borrows component types like [`World::query`] and limits matching
+    /// entities with presence filters.
+    ///
+    /// # Panics
+    ///
+    /// If `D` or a live query has an incompatible borrow of the same type.
+    pub fn query_filtered<D: QueryData, F: QueryFilter>(&self) -> Query<'_, D, F> {
+        Query::new(self)
+    }
+
+    pub(crate) fn query_archetypes(&self) -> impl Iterator<Item = (&[TypeKey], &[Entity])> {
+        self.archetypes.iter()
+    }
+
+    pub(crate) fn signature(&self, archetype: usize) -> &[TypeKey] {
+        self.archetypes.signature(archetype)
+    }
+
+    pub(crate) fn store<T: Component>(&self) -> Option<&Store<T>> {
+        self.stores.get::<T>(self.types.get::<T>()?.key())
+    }
+
+    pub(crate) fn sparse_index(&self, key: TypeKey) -> Option<&SparseIndex> {
+        self.stores.sparse_index(key)
+    }
+
+    pub(crate) fn location(&self, entity: Entity) -> Option<Location> {
         self.entities
             .contains(entity)
             .then(|| self.archetypes.location(entity))
@@ -268,18 +311,18 @@ mod tests {
         // Removing one column moves the first entity and fills its old row
         // with the last entity from every column of the source archetype.
         assert_eq!(world.remove::<Velocity>(first), Some(Velocity(10)));
-        assert_eq!(world.get::<Position>(first), Some(&Position(0)));
-        assert_eq!(world.get::<Velocity>(first), None);
-        assert_eq!(world.get::<Position>(last), Some(&Position(2)));
-        assert_eq!(world.get::<Velocity>(last), Some(&Velocity(12)));
+        assert_eq!(world.get::<Position>(first).as_deref(), Some(&Position(0)));
+        assert_eq!(world.get::<Velocity>(first).as_deref(), None);
+        assert_eq!(world.get::<Position>(last).as_deref(), Some(&Position(2)));
+        assert_eq!(world.get::<Velocity>(last).as_deref(), Some(&Velocity(12)));
 
         assert_eq!(world.insert(first, Velocity(20)), Ok(None));
         assert!(world.despawn(middle));
         assert_eq!(world.insert(first, Position(8)), Ok(Some(Position(0))));
         world.get_mut::<Velocity>(first).unwrap().0 += 1;
-        assert_eq!(world.get::<Velocity>(first), Some(&Velocity(21)));
-        assert_eq!(world.get::<Position>(last), Some(&Position(2)));
-        assert_eq!(world.get::<Velocity>(last), Some(&Velocity(12)));
+        assert_eq!(world.get::<Velocity>(first).as_deref(), Some(&Velocity(21)));
+        assert_eq!(world.get::<Position>(last).as_deref(), Some(&Position(2)));
+        assert_eq!(world.get::<Velocity>(last).as_deref(), Some(&Velocity(12)));
     }
 
     #[test]
@@ -304,10 +347,10 @@ mod tests {
         assert!(world.despawn(second));
         let reused = world.spawn_empty();
         assert_eq!(second.index(), reused.index());
-        assert_eq!(world.get::<Selected<u8>>(reused), None);
+        assert_eq!(world.get::<Selected<u8>>(reused).as_deref(), None);
         assert_eq!(world.insert(second, Selected(40_u8)), Err(Selected(40)));
         assert_eq!(world.remove::<Position>(second), None);
-        assert_eq!(world.get::<Position>(first), Some(&Position(5)));
+        assert_eq!(world.get::<Position>(first).as_deref(), Some(&Position(5)));
     }
 
     #[test]
@@ -333,7 +376,10 @@ mod tests {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| world.despawn(doomed)));
         assert!(dropped.is_err());
         assert!(!world.contains(doomed));
-        assert_eq!(world.get::<Position>(survivor), Some(&Position(6)));
+        assert_eq!(
+            world.get::<Position>(survivor).as_deref(),
+            Some(&Position(6))
+        );
         assert!(!world.get::<OnDrop>(survivor).unwrap().0);
     }
 }

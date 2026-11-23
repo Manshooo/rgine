@@ -65,6 +65,12 @@ impl Archetypes {
         &self.tables[archetype].signature
     }
 
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&[TypeKey], &[Entity])> {
+        self.tables
+            .iter()
+            .map(|table| (table.signature.as_ref(), table.entities.as_slice()))
+    }
+
     pub(crate) fn transition(&mut self, from: usize, component: TypeKey, edge: Edge) -> usize {
         let source = &self.tables[from];
         if let Some(&to) = source.edges.get(&(component, edge)) {
