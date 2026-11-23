@@ -6,6 +6,9 @@
 //! names a backend type. Callers hold opaque handles ([`WindowId`]), record
 //! one-way [`Commands`], and receive batches of [`Event`]s.
 
+#[cfg(target_os = "android")]
+#[doc(hidden)]
+pub mod android_entry;
 mod app;
 mod backend;
 mod command;

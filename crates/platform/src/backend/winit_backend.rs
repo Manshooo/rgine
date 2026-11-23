@@ -15,12 +15,19 @@ use winit::{
 use super::winit_input;
 use crate::{
     Command, Commands, Event, InputEvent, InputTimestamp, PlatformApp, PlatformError, SurfaceEvent,
-    SurfaceSource, WindowEvent, WindowId,
+    SurfaceSource, WindowEvent, WindowId, window::SurfaceHandles,
 };
 
 pub(crate) fn run<A: PlatformApp>(app: A) -> Result<(), PlatformError> {
-    let event_loop =
-        EventLoop::new().map_err(|error| PlatformError::EventLoop(error.to_string()))?;
+    let mut builder = EventLoop::builder();
+    #[cfg(target_os = "android")]
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        builder.with_android_app(crate::android_entry::take_app()?);
+    }
+    let event_loop = builder
+        .build()
+        .map_err(|error| PlatformError::EventLoop(error.to_string()))?;
     // The contract is that the application is updated once per loop iteration,
     // which is also what a fixed timestep will need. Under the default `Wait`
     // the loop sleeps until the OS sends something, so updates would only
@@ -83,7 +90,7 @@ impl<A: PlatformApp> Driver<A> {
         let size = created.inner_size();
         self.app.surface_event(SurfaceEvent::Available(
             window,
-            SurfaceSource::new(Arc::clone(&created)),
+            SurfaceSource::new(created.clone()),
             [size.width, size.height],
         ));
         self.handles.insert(created.id(), window);
@@ -161,6 +168,7 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
         let event = match event {
             BackendWindowEvent::CloseRequested => WindowEvent::CloseRequested,
             BackendWindowEvent::RedrawRequested => WindowEvent::RedrawRequested,
+            BackendWindowEvent::Occluded(occluded) => WindowEvent::Occluded(occluded),
             BackendWindowEvent::Resized(size) => WindowEvent::Resized {
                 width: size.width,
                 height: size.height,
@@ -200,5 +208,11 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
                 return;
             }
         }
+    }
+}
+
+impl SurfaceHandles for Window {
+    fn pre_present_notify(&self) {
+        Window::pre_present_notify(self);
     }
 }

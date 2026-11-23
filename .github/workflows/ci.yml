@@ -77,3 +77,4 @@ jobs:
       # xtask is host-only tooling; cross-compiling it proves nothing.
       - run: cargo check --workspace --exclude xtask --locked --target aarch64-linux-android
       - run: cargo check -p engine-render --example surface_spike --locked --target aarch64-linux-android
+      - run: cargo check -p engine-app --example clear_window_android --locked --target aarch64-linux-android

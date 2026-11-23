@@ -9,16 +9,19 @@
 pub use engine_core as core;
 pub use engine_ecs as ecs;
 pub use engine_platform as platform;
+pub use frames::RenderError;
 pub use replay::{InputRecording, ReplayError};
 pub use simulation::{FixedStep, Resources, Simulation, StepContext};
 
+mod frames;
 mod replay;
 mod simulation;
 
 use engine_ecs::{Schedule, StageId, Tick, World};
 use engine_platform::{
-    Commands, Event, PlatformApp, PlatformError, WindowDesc, WindowEvent, WindowId,
+    Commands, Event, PlatformApp, PlatformError, SurfaceEvent, WindowDesc, WindowEvent, WindowId,
 };
+use frames::Frames;
 
 /// Configures a subsystem through the application's registration APIs.
 pub trait Plugin {
@@ -101,6 +104,14 @@ impl App {
         engine_platform::run(&mut Runner::new(self))
     }
 
+    /// Runs the windowed app and presents a linear RGBA clear color on redraw.
+    pub fn run_rendered(self, clear_color: [f64; 4]) -> Result<(), RenderError> {
+        let mut runner = Runner::new(self);
+        runner.frames = Some(Frames::new(clear_color));
+        engine_platform::run(&mut runner).map_err(RenderError::Platform)?;
+        runner.render_failure.map_or(Ok(()), Err)
+    }
+
     /// Runs the windowed simulation and returns its input recording when the
     /// event loop exits successfully. Some mobile event loops never return.
     pub fn run_recorded(self) -> Result<InputRecording, PlatformError> {
@@ -119,6 +130,8 @@ struct Runner {
     window: WindowDesc,
     open: Vec<WindowId>,
     simulation: Simulation,
+    frames: Option<Frames>,
+    render_failure: Option<RenderError>,
 }
 
 impl Runner {
@@ -127,11 +140,14 @@ impl Runner {
             window: app.window,
             open: Vec::new(),
             simulation: app.simulation,
+            frames: None,
+            render_failure: None,
         }
     }
     fn update(&mut self, events: &[Event], commands: &mut Commands) {
         let elapsed = self.simulation.clock.sample_elapsed();
         let mut active = !self.open.is_empty();
+        let mut redraw = false;
         for event in events {
             match event {
                 // Resume can fire more than once: on platforms that tear
@@ -139,20 +155,29 @@ impl Runner {
                 Event::Resumed => {
                     if self.open.is_empty() {
                         commands.create_windows(std::slice::from_ref(&self.window), &mut self.open);
+                        if self.frames.is_some() {
+                            commands.request_redraw(&self.open);
+                        }
                     }
                 }
                 Event::Suspended => {
                     active = false;
+                    redraw = false;
                     self.simulation.discard_pending_input();
                     commands.close_windows(&self.open);
                     self.open.clear();
                 }
                 Event::Window {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
+                    window,
+                    event: WindowEvent::CloseRequested | WindowEvent::Destroyed,
+                } if self.open.contains(window) => {
                     active = false;
                     commands.exit();
+                }
+                Event::Window { window, event } if self.open.contains(window) => {
+                    if let Some(frames) = &mut self.frames {
+                        redraw |= frames.window_event(*event, *window, commands);
+                    }
                 }
                 Event::Input(input) if active && self.open.contains(&input.window) => {
                     self.simulation.queue_input(std::iter::once(*input));
@@ -162,6 +187,15 @@ impl Runner {
         }
         if active {
             self.simulation.advance(elapsed);
+            if redraw {
+                let frames = self.frames.as_mut().expect("only rendered windows redraw");
+                if let Err(error) = frames.draw(&self.open, commands) {
+                    if self.render_failure.is_none() {
+                        self.render_failure = Some(error);
+                    }
+                    commands.exit();
+                }
+            }
         }
     }
 }
@@ -169,6 +203,20 @@ impl Runner {
 impl PlatformApp for &mut Runner {
     fn update(&mut self, events: &[Event], commands: &mut Commands) {
         Runner::update(self, events, commands);
+    }
+
+    fn surface_event(&mut self, event: SurfaceEvent) {
+        if let Some(frames) = &mut self.frames {
+            match event {
+                SurfaceEvent::Available(window, source, size) if self.open.contains(&window) => {
+                    frames.attach(source, size);
+                }
+                SurfaceEvent::Invalidating(window) if self.open.contains(&window) => {
+                    frames.detach();
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -269,5 +317,70 @@ mod tests {
         );
 
         assert!(commands.drain().is_empty());
+    }
+
+    #[test]
+    fn rendered_window_requests_redraw_on_open_and_restore() {
+        let mut runner = runner();
+        runner.frames = Some(Frames::new([0.0, 0.0, 0.0, 1.0]));
+        let mut commands = Commands::default();
+
+        runner.update(&[Event::Resumed], &mut commands);
+        let window = runner.open[0];
+        assert!(matches!(
+            commands.drain().as_slice(),
+            [Command::CreateWindow { .. }, Command::RequestRedraw(target)] if *target == window
+        ));
+
+        runner.update(
+            &[window_event(
+                window,
+                WindowEvent::Resized {
+                    width: 0,
+                    height: 0,
+                },
+            )],
+            &mut commands,
+        );
+        assert!(commands.drain().is_empty());
+
+        runner.update(
+            &[window_event(
+                window,
+                WindowEvent::Resized {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+            &mut commands,
+        );
+        assert_eq!(commands.drain(), vec![Command::RequestRedraw(window)]);
+    }
+
+    #[test]
+    fn ignores_queued_events_from_a_window_closed_on_suspend() {
+        let mut runner = runner();
+        runner.frames = Some(Frames::new([0.0, 0.0, 0.0, 1.0]));
+        let mut commands = Commands::default();
+        runner.update(&[Event::Resumed], &mut commands);
+        let old = runner.open[0];
+        let _ = commands.drain();
+
+        runner.update(
+            &[
+                Event::Suspended,
+                Event::Resumed,
+                window_event(old, WindowEvent::Destroyed),
+                window_event(old, WindowEvent::RedrawRequested),
+            ],
+            &mut commands,
+        );
+        let window = runner.open[0];
+        assert_ne!(window, old);
+        assert!(matches!(
+            commands.drain().as_slice(),
+            [Command::CloseWindow(closed), Command::CreateWindow { .. }, Command::RequestRedraw(target)]
+                if *closed == old && *target == window
+        ));
     }
 }

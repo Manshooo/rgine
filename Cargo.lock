@@ -385,6 +385,7 @@ dependencies = [
  "engine-core",
  "engine-ecs",
  "engine-platform",
+ "engine-render",
  "serde",
  "serde_json",
 ]
@@ -480,6 +481,7 @@ version = "0.1.0"
 dependencies = [
  "engine-platform",
  "pollster",
+ "tracing",
  "wgpu",
 ]
 

@@ -39,6 +39,7 @@ engine-core-macros = { path = "crates/core-macros", version = "=0.1.0" }
 engine-ecs = { path = "crates/ecs", version = "0.1.0" }
 engine-ecs-macros = { path = "crates/ecs-macros", version = "=0.1.0" }
 engine-platform = { path = "crates/platform", version = "0.1.0" }
+engine-render = { path = "crates/render", version = "0.1.0" }
 engine-app = { path = "crates/app", version = "0.1.0" }
 
 glam = "0.30"

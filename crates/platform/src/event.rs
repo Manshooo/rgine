@@ -47,6 +47,8 @@ pub enum WindowEvent {
     RedrawRequested,
     /// The window is gone and its handle is now stale.
     Destroyed,
+    /// The platform reports that the drawable became hidden or visible.
+    Occluded(bool),
 }
 
 #[cfg(test)]
