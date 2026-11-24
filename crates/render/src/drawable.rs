@@ -62,17 +62,21 @@ impl Drawable {
             surface,
             instance,
             adapter,
-            device,
-            queue,
+            resources,
         } = backend::open(&source)?;
         let info = adapter.get_info();
-        tracing::info!(adapter = %info.name, backend = ?info.backend, "graphics device ready");
+        tracing::info!(
+            adapter = %info.name,
+            backend = ?info.backend,
+            binding_mode = ?resources.binding_mode(),
+            "graphics device ready"
+        );
         Ok(Self {
             surface: Some(surface),
             source,
             instance,
             adapter,
-            resources: ResourceTable::new(device, queue),
+            resources,
             frame_graph,
             scene: SceneRenderer::default(),
             size,

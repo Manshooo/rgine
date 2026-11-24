@@ -13,7 +13,7 @@ fn main() -> Result<(), RenderError> {
     engine_app::core::init_logging();
     let mut meshes = MeshRegistry::default();
     let cube = meshes.insert(Mesh::cube());
-    let plane = meshes.insert(Mesh::plane());
+    let plane = meshes.insert(Mesh::plane().with_checkerboard());
     let mut app =
         App::new().with_window(WindowDesc::new("rgine - procedural scene").with_size(960, 640));
     let mut orbit = Orbit {

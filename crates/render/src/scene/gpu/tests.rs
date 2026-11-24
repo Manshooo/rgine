@@ -7,6 +7,98 @@ use super::*;
 use crate::resources::ResourceError;
 use crate::scene::SceneCamera;
 
+const SIDE: u32 = 64;
+
+#[test]
+fn scene_pipeline_keys_include_binding_mode_and_layout() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let classic = ScenePipelineKey::new(format, BindingMode::Classic);
+    let bindless = ScenePipelineKey::new(format, BindingMode::Bindless);
+    assert_ne!(classic, bindless);
+    assert_ne!(classic.layout, bindless.layout);
+    assert_eq!(
+        (bindless.layout.sampled_textures, bindless.layout.samplers),
+        (128, 16)
+    );
+}
+
+#[test]
+#[ignore = "requires a GPU with the draw-uniform bindless profile"]
+fn classic_and_bindless_draw_the_same_materials() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let select_adapter =
+        || pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let adapter = select_adapter();
+    let mut automatic = ResourceTable::request(&adapter, false).unwrap();
+    let info = adapter.get_info();
+    let limits = adapter.limits();
+    eprintln!(
+        "{} ({:?}): mode {:?}, arrays {}, sampler arrays {}",
+        info.name,
+        info.backend,
+        automatic.binding_mode(),
+        limits.max_binding_array_elements_per_shader_stage,
+        limits.max_binding_array_sampler_elements_per_shader_stage
+    );
+    assert_eq!(automatic.binding_mode(), BindingMode::Bindless);
+    assert_eq!(
+        automatic.device.features(),
+        wgpu::Features::TEXTURE_BINDING_ARRAY
+    );
+    let mut classic = ResourceTable::request(&select_adapter(), true).unwrap();
+    assert_eq!(classic.binding_mode(), BindingMode::Classic);
+    assert!(classic.device.features().is_empty());
+
+    let mut meshes = MeshRegistry::default();
+    let solid = meshes.insert(Mesh::cube());
+    let checker = meshes.insert(Mesh::cube().with_checkerboard());
+    let scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: vec![
+            SceneObject {
+                mesh: solid,
+                transform: Mat4::from_translation(Vec3::new(-0.7, 0.0, -3.0)),
+                color: [0.0, 1.0, 0.0, 1.0],
+            },
+            SceneObject {
+                mesh: checker,
+                transform: Mat4::from_translation(Vec3::new(0.7, 0.0, -3.0)),
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+        ],
+    };
+    let mut bindless_renderer = SceneRenderer::default();
+    let bindless_image = scene_pixels(&mut bindless_renderer, &mut automatic, &meshes, &scene);
+    assert_eq!(bindless_renderer.materials[0].unwrap().indices(), [0, 0]);
+    assert_eq!(bindless_renderer.materials[1].unwrap().indices(), [1, 1]);
+    let mut classic_renderer = SceneRenderer::default();
+    let classic_image = scene_pixels(&mut classic_renderer, &mut classic, &meshes, &scene);
+    let solid = pixel(&classic_image, 17, 28);
+    let red_a = pixel(&classic_image, 42, 28);
+    let red_b = pixel(&classic_image, 53, 28);
+    assert!(solid[1] > 64 && solid[0] == 0, "{solid:?}");
+    assert!(
+        red_a[0] > 0 && red_b[0] > 0 && red_a[0] != red_b[0],
+        "{red_a:?}, {red_b:?}"
+    );
+    assert!(
+        bindless_image
+            .iter()
+            .zip(&classic_image)
+            .all(|(bindless, classic)| bindless.abs_diff(*classic) <= 1),
+        "classic and bindless images differ by more than one 8-bit color step"
+    );
+    eprintln!(
+        "matched {SIDE}x{SIDE} frames with solid {solid:?} and checkerboard {red_a:?}, {red_b:?}"
+    );
+}
+
 #[test]
 #[ignore = "requires a native GPU adapter"]
 fn scene_depth_and_stable_meshes_survive_a_new_device() {
@@ -90,7 +182,24 @@ fn center_pixel(
     meshes: &MeshRegistry,
     scene: &Scene,
 ) -> [u8; 4] {
-    const SIDE: u32 = 64;
+    pixel(
+        &scene_pixels(renderer, table, meshes, scene),
+        SIDE / 2,
+        SIDE / 2,
+    )
+}
+
+fn pixel(image: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let offset = ((y * SIDE + x) * 4) as usize;
+    image[offset..offset + 4].try_into().unwrap()
+}
+
+fn scene_pixels(
+    renderer: &mut SceneRenderer,
+    table: &mut ResourceTable,
+    meshes: &MeshRegistry,
+    scene: &Scene,
+) -> Vec<u8> {
     const ROW: u32 = SIDE * 4;
     let format = wgpu::TextureFormat::Rgba8Unorm;
     renderer
@@ -150,7 +259,5 @@ fn center_pixel(
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
     recv.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
-    let bytes = slice.get_mapped_range().unwrap();
-    let center = ((SIDE / 2) * (ROW + 4)) as usize;
-    bytes[center..center + 4].try_into().unwrap()
+    slice.get_mapped_range().unwrap().to_vec()
 }

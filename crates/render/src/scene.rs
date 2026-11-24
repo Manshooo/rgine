@@ -54,12 +54,14 @@ impl MeshRegistry {
 struct Vertex {
     position: Vec3,
     normal: Vec3,
+    uv: [f32; 2],
 }
 
 /// Indexed procedural geometry with a position and normal at each vertex.
 pub struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
+    checkerboard: bool,
 }
 
 impl Mesh {
@@ -68,6 +70,7 @@ impl Mesh {
         let mut mesh = Self {
             vertices: Vec::with_capacity(24),
             indices: Vec::with_capacity(36),
+            checkerboard: false,
         };
         for (normal, tangent) in [
             (Vec3::X, Vec3::Y),
@@ -87,22 +90,38 @@ impl Mesh {
         let mut mesh = Self {
             vertices: Vec::with_capacity(4),
             indices: Vec::with_capacity(6),
+            checkerboard: false,
         };
         mesh.quad(Vec3::ZERO, Vec3::Y, Vec3::X);
         mesh
+    }
+
+    /// Samples a built-in checkerboard on each face, tinted by the object's color.
+    pub fn with_checkerboard(mut self) -> Self {
+        self.checkerboard = true;
+        self
     }
 
     fn quad(&mut self, center: Vec3, normal: Vec3, tangent: Vec3) {
         let first = self.vertices.len() as u32;
         let u = tangent * 0.5;
         let v = normal.cross(tangent) * 0.5;
-        for position in [
+        let positions = [
             center - u - v,
             center + u - v,
             center + u + v,
             center - u + v,
-        ] {
-            self.vertices.push(Vertex { position, normal });
+        ];
+        for (position, uv) in
+            positions
+                .into_iter()
+                .zip([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        {
+            self.vertices.push(Vertex {
+                position,
+                normal,
+                uv,
+            });
         }
         self.indices
             .extend([first, first + 1, first + 2, first, first + 2, first + 3]);
