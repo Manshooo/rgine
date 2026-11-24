@@ -1,6 +1,6 @@
 # Project status
-**Date**: 2026-11-23
-**Milestone**: 1 - ECS + App Loop, complete. Next: 2 - Render v1
+**Date**: 2026-11-24
+**Milestone**: 2 - Render v1, in progress
 **Version**: 0.1.0-dev
 
 ## Phase 0 exit
@@ -40,9 +40,17 @@ The cross-cutting iteration budget criterion in ROADMAP is not enforced yet; see
 - The type registry and reflection derive, archetype and sparse storage, filtered queries, change detection, deferred commands, relationships, required components and hooks are in `master`. The app runs the deterministic ECS schedule with fixed steps, plugins and input recording.
 - [Issue #23](https://github.com/Manshooo/rgine/issues/23) tracks native OS timestamps as follow-up work. The current input adapter supplies monotonic receipt timestamps with explicit provenance.
 
+## Phase 2 progress
+
+Phase 2 uses wgpu 30.0.2 with minimum Rust 1.87. The [surface spike](https://github.com/Manshooo/rgine/issues/37) exercises the platform contract in [ADR 0014](docs/adr/0014-render-backend-and-surface-lifetime.md). The app presents a clear color through the regular window loop ([#38](https://github.com/Manshooo/rgine/issues/38)), and the clear pass now executes through the compiled render graph ([#39](https://github.com/Manshooo/rgine/issues/39), [ADR 0015](docs/adr/0015-render-graph.md)). The [quick start](README.md#первый-запуск) shows how to run the example and the input replay test.
+
 ## Next
 
-Phase 2 uses wgpu 30.0.2 with minimum Rust 1.87. [ADR 0014](docs/adr/0014-render-backend-and-surface-lifetime.md) is accepted and the [surface spike](https://github.com/Manshooo/rgine/issues/37) exercises the platform contract. [Frame integration](https://github.com/Manshooo/rgine/issues/38) is next in the [Render v1 milestone](https://github.com/Manshooo/rgine/milestone/3).
+- Cull passes that contribute to neither exported outputs nor declared side effects ([#40](https://github.com/Manshooo/rgine/issues/40)), then reuse compatible transient allocations based on the retained passes ([#41](https://github.com/Manshooo/rgine/issues/41)).
+- Establish the resource table and classic bind-group backend ([#42](https://github.com/Manshooo/rgine/issues/42)), then render procedural meshes with a camera, depth testing and scene state extracted after ECS simulation ([#43](https://github.com/Manshooo/rgine/issues/43)).
+- The shader variant budget ([#45](https://github.com/Manshooo/rgine/issues/45)) and the reference measurement protocol ([#50](https://github.com/Manshooo/rgine/issues/50)) can start independently. The protocol defines the measurements for the Render v1 exit run ([#51](https://github.com/Manshooo/rgine/issues/51)).
+
+The [Render v1 milestone](https://github.com/Manshooo/rgine/milestone/3) tracks the remaining work and dependencies.
 
 ## Deferred
 - [ ] Iteration budget harness in CI. The ECS benchmark reports fixed-update timing. Phase 2 will establish which renderer iteration budgets can be measured and enforced.
