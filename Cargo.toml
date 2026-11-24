@@ -27,7 +27,6 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.87"
 repository = "https://github.com/Manshooo/rgine"
-homepage = "https://github.com/Manshooo/rgine"
 
 [workspace.dependencies]
 # Engine crates depend on each other through these entries rather than by bare
