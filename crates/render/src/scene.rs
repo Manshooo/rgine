@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_core::glam::{Mat4, Vec3};
 
-pub(crate) use gpu::SceneRenderer;
+pub(crate) use gpu::{SCENE_COLOR_FORMATS, SceneRenderer};
 
 static NEXT_REGISTRY: AtomicU64 = AtomicU64::new(0);
 
@@ -107,6 +107,33 @@ impl DirectionalLight {
 impl Default for DirectionalLight {
     fn default() -> Self {
         Self::new(Vec3::new(-0.5, 1.0, 0.8), 3.2).expect("valid default scene light")
+    }
+}
+
+/// Diffuse scene lighting from the upper and lower world-space hemispheres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HemisphereLight {
+    upper: Vec3,
+    lower: Vec3,
+}
+
+impl HemisphereLight {
+    /// Creates a light from finite, nonnegative linear RGB intensities.
+    pub fn new(upper: Vec3, lower: Vec3) -> Option<Self> {
+        (upper.is_finite()
+            && lower.is_finite()
+            && upper.min_element() >= 0.0
+            && lower.min_element() >= 0.0)
+            .then_some(Self { upper, lower })
+    }
+}
+
+impl Default for HemisphereLight {
+    fn default() -> Self {
+        Self {
+            upper: Vec3::splat(0.20),
+            lower: Vec3::splat(0.20),
+        }
     }
 }
 

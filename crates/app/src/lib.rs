@@ -37,6 +37,7 @@ pub struct App {
     update: StageId,
     window: WindowDesc,
     directional_light: scene::DirectionalLight,
+    hemisphere_light: scene::HemisphereLight,
     skybox_enabled: bool,
 }
 
@@ -49,6 +50,7 @@ impl Default for App {
             update,
             window: WindowDesc::new("rgine - bootstrap"),
             directional_light: scene::DirectionalLight::default(),
+            hemisphere_light: scene::HemisphereLight::default(),
             skybox_enabled: false,
         }
     }
@@ -112,6 +114,12 @@ impl App {
         self
     }
 
+    /// Sets the upper and lower diffuse lighting for the windowed scene.
+    pub fn with_hemisphere_light(mut self, light: scene::HemisphereLight) -> Self {
+        self.hemisphere_light = light;
+        self
+    }
+
     /// Adds the procedural sky behind opaque geometry in the windowed scene.
     pub fn with_skybox(mut self) -> Self {
         self.skybox_enabled = true;
@@ -140,6 +148,7 @@ impl App {
             meshes,
             self.simulation.world(),
             self.directional_light,
+            self.hemisphere_light,
             self.skybox_enabled,
         );
         self.run_with_frames(frames)

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -6,8 +7,88 @@ use engine_core::glam::{Mat4, Vec3};
 use super::*;
 use crate::resources::ResourceError;
 use crate::scene::SceneCamera;
+use crate::shaders::SHADER_VARIANTS;
 
 const SIDE: u32 = 64;
+
+#[test]
+fn validates_scene_pipeline_catalogue() {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::NOOP;
+    descriptor.backend_options.noop.enable = true;
+    validate_catalogue(descriptor);
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter with draw-uniform bindless support"]
+fn validates_scene_pipeline_catalogue_on_native_backend() {
+    validate_catalogue(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+}
+
+fn validate_catalogue(descriptor: wgpu::InstanceDescriptor) {
+    let instance = wgpu::Instance::new(descriptor);
+    let mut covered = HashSet::new();
+    for mode in [BindingMode::Classic, BindingMode::Bindless] {
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let mut table = ResourceTable::request(&adapter, mode == BindingMode::Classic).unwrap();
+        assert_eq!(table.binding_mode(), mode);
+        let mut renderer = SceneRenderer::default();
+        for &format in SCENE_COLOR_FORMATS {
+            renderer.skybox_enabled = false;
+            renderer.prepare_pipelines(&mut table, format).unwrap();
+            let keys = &renderer.pipelines.entries;
+            assert!(keys.contains_key(&ScenePipelineKey::new(format, mode)));
+            assert!(keys.contains_key(&ScenePipelineKey::DIRECTIONAL_SHADOW));
+            assert!(!keys.contains_key(&ScenePipelineKey::skybox(format)));
+
+            renderer.skybox_enabled = true;
+            renderer.prepare_pipelines(&mut table, format).unwrap();
+            assert!(
+                renderer
+                    .pipelines
+                    .entries
+                    .contains_key(&ScenePipelineKey::skybox(format))
+            );
+        }
+        let prepared = renderer.pipeline_creations();
+        for &format in SCENE_COLOR_FORMATS {
+            renderer.prepare_pipelines(&mut table, format).unwrap();
+            assert_eq!(renderer.pipeline_creations(), prepared);
+        }
+        println!(
+            "{:?} {mode:?}: {prepared} scene pipelines prepared",
+            adapter.get_info().backend
+        );
+        covered.extend(
+            renderer
+                .pipelines
+                .entries
+                .into_keys()
+                .map(|key| (key.shader, key.color_format)),
+        );
+    }
+    let declared: HashSet<_> = SHADER_VARIANTS
+        .iter()
+        .flat_map(|&variant| {
+            let formats = if variant == ShaderVariantKey::DirectionalShadow {
+                &[][..]
+            } else {
+                SCENE_COLOR_FORMATS
+            };
+            formats
+                .iter()
+                .copied()
+                .map(Some)
+                .chain(formats.is_empty().then_some(None))
+                .map(move |format| (variant, format))
+        })
+        .collect();
+    assert_eq!(
+        covered, declared,
+        "every declared shader and attachment configuration must be prepared"
+    );
+    println!("Validated {} distinct scene pipeline keys", covered.len());
+}
 
 #[test]
 fn scene_pipeline_keys_include_binding_mode_and_layout() {
@@ -163,6 +244,53 @@ fn directional_shadow_darkens_the_receiver_and_follows_the_occluder() {
             info.backend,
             table.binding_mode(),
         );
+    }
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter with draw-uniform bindless support"]
+fn dielectric_sphere_shows_floor_bounce_without_direct_light() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let mut meshes = MeshRegistry::default();
+    let sphere = meshes.insert(Mesh::sphere().with_pbr_material(PbrMaterial::new(0.0, 0.7)));
+    let scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: vec![SceneObject {
+            mesh: sphere,
+            transform: Mat4::from_translation(Vec3::new(0.0, 0.0, -2.5)),
+            color: [0.8, 0.8, 0.8, 1.0],
+        }],
+    };
+    for mode in [BindingMode::Classic, BindingMode::Bindless] {
+        let mut table = ResourceTable::request(&adapter, mode == BindingMode::Classic).unwrap();
+        assert_eq!(table.binding_mode(), mode);
+        let mut renderer = SceneRenderer {
+            light: DirectionalLight::new(Vec3::Y, 2.0).unwrap(),
+            hemisphere_light: HemisphereLight::new(Vec3::splat(0.20), Vec3::new(0.07, 0.14, 0.28))
+                .unwrap(),
+            skybox_enabled: true,
+            ..Default::default()
+        };
+        let lit = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+        renderer.light = DirectionalLight::new(Vec3::Y, 0.0).unwrap();
+        let fill = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+        let underside = pixel(&lit, 32, 41);
+        let top = pixel(&fill, 32, 22);
+        assert_eq!(underside, pixel(&fill, 32, 41));
+        assert!(underside[2] > underside[0] + 25, "{underside:?}");
+        assert!(
+            top[2] - top[0] < underside[2] - underside[0],
+            "{top:?}, {underside:?}"
+        );
+        assert!(pixel(&lit, 32, 22)[0] > top[0] + 25);
+        println!("{mode:?}: fill on the underside {underside:?}, fill on top {top:?}");
     }
 }
 
@@ -382,8 +510,10 @@ fn scene_pixels(
 ) -> Vec<u8> {
     const ROW: u32 = SIDE * 4;
     let format = wgpu::TextureFormat::Rgba8Unorm;
+    renderer.prepare_pipelines(table, format).unwrap();
+    let prepared = renderer.pipeline_creations();
     renderer
-        .prepare(table, meshes, scene, [SIDE, SIDE], format)
+        .prepare(table, meshes, scene, [SIDE, SIDE])
         .unwrap();
     let size = wgpu::Extent3d {
         width: SIDE,
@@ -413,9 +543,11 @@ fn scene_pixels(
             scene,
             &mut encoder,
             &color.create_view(&Default::default()),
+            format,
             wgpu::Color::BLACK,
         )
         .unwrap();
+    assert_eq!(renderer.pipeline_creations() - prepared, 0);
     encoder.copy_texture_to_buffer(
         color.as_image_copy(),
         wgpu::TexelCopyBufferInfo {

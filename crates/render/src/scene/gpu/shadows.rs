@@ -10,37 +10,42 @@ pub(super) const MAP_SIZE: [u32; 2] = [1024, 1024];
 
 pub(super) struct ShadowTarget {
     pub(super) view: wgpu::TextureView,
-    pub(super) layout: wgpu::BindGroupLayout,
     pub(super) group: wgpu::BindGroup,
+}
+
+pub(super) fn lookup_layout(device: &wgpu::Device) -> Result<wgpu::BindGroupLayout, ResourceError> {
+    checked_gpu(device, || {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("directional shadow lookup layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
+        })
+    })
 }
 
 impl ShadowTarget {
     pub(super) fn new(
         device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
         view: wgpu::TextureView,
     ) -> Result<Self, ResourceError> {
-        let (layout, group) = checked_gpu(device, || {
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("directional shadow lookup layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                        count: None,
-                    },
-                ],
-            });
+        let group = checked_gpu(device, || {
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("directional shadow comparison"),
                 compare: Some(wgpu::CompareFunction::LessEqual),
@@ -48,9 +53,9 @@ impl ShadowTarget {
                 mag_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("directional shadow lookup"),
-                layout: &layout,
+                layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -61,14 +66,9 @@ impl ShadowTarget {
                         resource: wgpu::BindingResource::Sampler(&sampler),
                     },
                 ],
-            });
-            (layout, group)
+            })
         })?;
-        Ok(Self {
-            view,
-            layout,
-            group,
-        })
+        Ok(Self { view, group })
     }
 }
 

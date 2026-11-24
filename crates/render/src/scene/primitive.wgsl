@@ -41,7 +41,9 @@ fn lit_color(input: VertexOutput, texel: vec4<f32>) -> vec4<f32> {
     }
 
     let metallic = object.metallic;
-    let ambient = base.rgb * mix(0.20, 0.10, metallic);
+    let upper_weight = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+    let hemisphere = mix(object.lower_light, object.upper_light, upper_weight);
+    let ambient = base.rgb * mix(hemisphere, vec3<f32>(0.10), metallic);
     let view = normalize(object.eye - input.world_position);
     let n_dot_v = max(dot(normal, view), 0.0);
     if n_dot_l <= 0.0 || n_dot_v <= 0.0 {

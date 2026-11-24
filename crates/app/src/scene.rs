@@ -4,7 +4,9 @@ use engine_core::glam::{Mat4, Quat, Vec3};
 use engine_ecs::{Component, World};
 use engine_render::scene::{Scene, SceneCamera, SceneObject};
 
-pub use engine_render::scene::{DirectionalLight, Mesh, MeshKey, MeshRegistry, PbrMaterial};
+pub use engine_render::scene::{
+    DirectionalLight, HemisphereLight, Mesh, MeshKey, MeshRegistry, PbrMaterial,
+};
 
 /// A world-space transform for a camera or a renderable object.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]

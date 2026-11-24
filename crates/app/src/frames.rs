@@ -45,6 +45,7 @@ struct SceneFrames {
     snapshot: Scene,
     scratch: Scene,
     light: scene::DirectionalLight,
+    hemisphere_light: scene::HemisphereLight,
     skybox_enabled: bool,
 }
 
@@ -72,6 +73,7 @@ impl Frames {
         meshes: MeshRegistry,
         world: &World,
         light: scene::DirectionalLight,
+        hemisphere_light: scene::HemisphereLight,
         skybox_enabled: bool,
     ) -> Self {
         Self {
@@ -80,6 +82,7 @@ impl Frames {
                 snapshot: scene::extract(world),
                 scratch: Scene::default(),
                 light,
+                hemisphere_light,
                 skybox_enabled,
             }),
             ..Self::new(color)
@@ -148,7 +151,11 @@ impl Frames {
             let mut drawable = Drawable::new(source, self.size).map_err(RenderError::Graphics)?;
             if let Some(scene) = &self.scene {
                 drawable.set_directional_light(scene.light);
+                drawable.set_hemisphere_light(scene.hemisphere_light);
                 drawable.set_skybox_enabled(scene.skybox_enabled);
+                drawable
+                    .prepare_scene_pipelines()
+                    .map_err(RenderError::Graphics)?;
             }
             self.surface = Some(Surface::Ready(Box::new(drawable)));
         }
@@ -219,6 +226,7 @@ mod tests {
             meshes,
             app.simulation.world(),
             scene::DirectionalLight::default(),
+            scene::HemisphereLight::default(),
             false,
         );
         let mut runner = Runner::new(app);

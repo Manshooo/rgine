@@ -11,6 +11,8 @@ struct Object {
     texture_index: u32,
     sampler_index: u32,
     shadow_clip_from_world: mat4x4<f32>,
+    upper_light: vec3<f32>,
+    lower_light: vec3<f32>,
 }
 
 @group(0) @binding(0) var<uniform> object: Object;

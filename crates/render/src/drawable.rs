@@ -7,7 +7,9 @@ use wgpu::CurrentSurfaceTexture;
 
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
 use crate::resources::{ResourceError, ResourceTable};
-use crate::scene::{DirectionalLight, MeshRegistry, Scene, SceneRenderer};
+use crate::scene::{
+    DirectionalLight, HemisphereLight, MeshRegistry, SCENE_COLOR_FORMATS, Scene, SceneRenderer,
+};
 
 /// A GPU or surface failure reported without exposing backend types.
 #[derive(Debug)]
@@ -50,7 +52,7 @@ pub struct Drawable {
     frame_graph: CompiledGraph<()>,
     scene: SceneRenderer,
     size: [u32; 2],
-    needs_configure: bool,
+    surface_format: Option<wgpu::TextureFormat>,
 }
 
 impl Drawable {
@@ -80,7 +82,7 @@ impl Drawable {
             frame_graph,
             scene: SceneRenderer::default(),
             size,
-            needs_configure: true,
+            surface_format: None,
         })
     }
 
@@ -94,28 +96,58 @@ impl Drawable {
         self.scene.light = light;
     }
 
+    /// Sets the upper and lower diffuse lighting for subsequent scene draws.
+    pub fn set_hemisphere_light(&mut self, light: HemisphereLight) {
+        self.scene.hemisphere_light = light;
+    }
+
     /// Draws the procedural sky behind opaque geometry when a scene has a camera.
     pub fn set_skybox_enabled(&mut self, enabled: bool) {
         self.scene.skybox_enabled = enabled;
+    }
+
+    /// Prepares scene pipelines for the current device, drawable format and skybox setting.
+    /// Call after configuring the scene and before starting a timed render loop with a nonzero size.
+    pub fn prepare_scene_pipelines(&mut self) -> Result<(), RenderError> {
+        if self.size.contains(&0) {
+            return Err(RenderError(
+                "cannot prepare a zero-sized scene drawable".into(),
+            ));
+        }
+        let format = self.configure_if_needed()?;
+        self.scene.prepare_pipelines(&mut self.resources, format)
+    }
+
+    /// Counts successful scene pipeline creations on this drawable's device.
+    /// Take the difference between samples before and after a measured pass.
+    pub fn scene_pipeline_creations(&self) -> usize {
+        self.scene.pipeline_creations()
     }
 
     /// Records the current size in physical pixels for the next redraw.
     pub fn resize(&mut self, size: [u32; 2]) {
         if self.size != size {
             self.size = size;
-            self.needs_configure = true;
+            self.surface_format = None;
         }
     }
 
     /// Replaces the surface while its native source is still valid.
     pub fn recreate(&mut self) -> Result<(), RenderError> {
+        self.surface_format = None;
         drop(self.surface.take());
         self.surface = Some(create_surface(&self.instance, &self.source)?);
-        self.needs_configure = true;
         Ok(())
     }
 
-    fn configure(&self, surface: &wgpu::Surface<'_>) -> Result<(), RenderError> {
+    fn configure_if_needed(&mut self) -> Result<wgpu::TextureFormat, RenderError> {
+        if let Some(format) = self.surface_format {
+            return Ok(format);
+        }
+        let surface = self
+            .surface
+            .as_ref()
+            .ok_or_else(|| RenderError("graphics surface is unavailable".into()))?;
         let [width, height] = self.size;
         let limit = self.resources.device.limits().max_texture_dimension_2d;
         if width > limit || height > limit {
@@ -123,11 +155,20 @@ impl Drawable {
                 "drawable size {width}x{height} exceeds the device limit of {limit}"
             )));
         }
-        let config = surface
+        let mut config = surface
             .get_default_config(&self.adapter, width, height)
             .ok_or_else(|| RenderError("graphics adapter does not support the surface".into()))?;
+        if !SCENE_COLOR_FORMATS.contains(&config.format) {
+            config.format = surface
+                .get_capabilities(&self.adapter)
+                .formats
+                .into_iter()
+                .find(|format| SCENE_COLOR_FORMATS.contains(format))
+                .ok_or_else(|| RenderError("surface offers no supported color format".into()))?;
+        }
         surface.configure(&self.resources.device, &config);
-        Ok(())
+        self.surface_format = Some(config.format);
+        Ok(config.format)
     }
 
     /// Clears the drawable to the given linear RGBA color and presents it.
@@ -153,20 +194,21 @@ impl Drawable {
         if self.size.contains(&0) {
             return Ok(DrawOutcome::Idle);
         }
+        let pipelines_before = self.scene_pipeline_creations();
+        let format = self.configure_if_needed()?;
+        if scene.is_some() {
+            self.scene.prepare_pipelines(&mut self.resources, format)?;
+        }
         let surface = self
             .surface
             .as_ref()
             .ok_or_else(|| RenderError("graphics surface is unavailable".into()))?;
-        if self.needs_configure {
-            self.configure(surface)?;
-            self.needs_configure = false;
-        }
 
         let (frame, suboptimal) = match surface.get_current_texture() {
             CurrentSurfaceTexture::Success(frame) => (frame, false),
             CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
             CurrentSurfaceTexture::Outdated => {
-                self.needs_configure = true;
+                self.surface_format = None;
                 return Ok(DrawOutcome::Retry);
             }
             CurrentSurfaceTexture::Lost => {
@@ -190,25 +232,23 @@ impl Drawable {
         let color = wgpu::Color { r, g, b, a };
         if let Some((meshes, scene)) = scene {
             let size = [frame.texture.width(), frame.texture.height()];
-            self.scene.prepare(
-                &mut self.resources,
-                meshes,
-                scene,
-                size,
-                frame.texture.format(),
-            )?;
             self.scene
-                .encode(&self.resources, scene, &mut encoder, &view, color)?;
+                .prepare(&mut self.resources, meshes, scene, size)?;
+            self.scene
+                .encode(&self.resources, scene, &mut encoder, &view, format, color)?;
         } else {
             self.encode_frame(&mut encoder, &view, color)?;
         }
         self.resources.queue.submit([encoder.finish()]);
         self.source.pre_present_notify();
         self.resources.queue.present(frame);
-        self.needs_configure = suboptimal;
+        if suboptimal {
+            self.surface_format = None;
+        }
         tracing::debug!(
             width = self.size[0],
             height = self.size[1],
+            pipeline_creations = self.scene_pipeline_creations() - pipelines_before,
             "presented frame"
         );
         Ok(DrawOutcome::Presented)
