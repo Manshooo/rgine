@@ -10,7 +10,7 @@ fn executes_dependencies_before_consumers_with_a_stable_ready_order() {
     let frame = graph.import("backbuffer");
     graph.add_pass("main", &[depth], &[frame], 1);
     graph.add_pass("depth", &[source], &[depth], 2);
-    graph.add_pass("independent", &[], &[], 3);
+    graph.add_side_effect_pass("independent", &[], &[], 3);
     graph.export(frame);
 
     let graph = graph.compile().unwrap();
@@ -27,6 +27,82 @@ fn executes_dependencies_before_consumers_with_a_stable_ready_order() {
         })
         .unwrap();
     assert_eq!(executed, [2, 1, 3]);
+}
+
+#[test]
+fn skips_passes_that_contribute_to_no_output_or_side_effect() {
+    let mut graph = RenderGraph::new();
+    let frame = graph.import("backbuffer");
+    let unused = graph.transient("unused");
+    graph.add_pass("clear", &[], &[frame], ());
+    graph.add_pass("disconnected", &[], &[], ());
+    graph.add_pass("unused producer", &[], &[unused], ());
+    graph.add_pass("unused reader", &[unused, frame], &[], ());
+    graph.export(frame);
+
+    let graph = graph.compile().unwrap();
+    let mut executed = Vec::new();
+    graph
+        .execute::<Infallible>(|pass| {
+            executed.push(pass.name().to_owned());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(executed, ["clear"]);
+}
+
+#[test]
+fn retains_the_transitive_producer_chain_for_an_export() {
+    let mut graph = RenderGraph::new();
+    let frame = graph.import("backbuffer");
+    let depth = graph.transient("depth");
+    let meshes = graph.transient("meshes");
+    graph.add_pass("main", &[depth], &[frame], 3);
+    graph.add_pass("depth", &[meshes], &[depth], 2);
+    graph.add_pass("prepare meshes", &[], &[meshes], 1);
+    graph.export(frame);
+
+    let graph = graph.compile().unwrap();
+    let mut executed = Vec::new();
+    graph
+        .execute::<Infallible>(|pass| {
+            executed.push(*pass.data());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(executed, [1, 2, 3]);
+}
+
+#[test]
+fn retains_a_side_effect_pass_and_its_dependencies_without_an_export() {
+    let mut graph = RenderGraph::new();
+    let buffer = graph.transient("capture buffer");
+    graph.add_side_effect_pass("readback", &[buffer], &[], 2);
+    graph.add_pass("capture", &[], &[buffer], 1);
+
+    let graph = graph.compile().unwrap();
+    let mut executed = Vec::new();
+    graph
+        .execute::<Infallible>(|pass| {
+            executed.push(*pass.data());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(executed, [1, 2]);
+}
+
+#[test]
+fn an_exported_import_can_have_no_live_passes() {
+    let mut graph = RenderGraph::new();
+    let input = graph.import("input");
+    graph.add_pass("unused reader", &[input], &[], ());
+    graph.export(input);
+
+    let graph = graph.compile().unwrap();
+    assert_eq!(graph.exports(), &[input]);
+    graph
+        .execute::<Infallible>(|_| panic!("no pass should execute"))
+        .unwrap();
 }
 
 #[test]

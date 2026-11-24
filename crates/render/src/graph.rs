@@ -25,6 +25,7 @@ pub struct Pass<P> {
     reads: Vec<ResourceId>,
     writes: Vec<ResourceId>,
     data: P,
+    has_side_effects: bool,
 }
 
 impl<P> Pass<P> {
@@ -93,7 +94,7 @@ impl<P> RenderGraph<P> {
         id
     }
 
-    /// Declares a pass. The order of its dependencies is resolved at compile time.
+    /// Declares a pass that runs if an exported result or a side effect needs it.
     pub fn add_pass(
         &mut self,
         name: impl Into<String>,
@@ -101,11 +102,36 @@ impl<P> RenderGraph<P> {
         writes: &[ResourceId],
         data: P,
     ) {
+        self.declare_pass(name.into(), reads, writes, data, false);
+    }
+
+    /// Declares a pass that must run even if none of its outputs are consumed.
+    ///
+    /// Use this for externally observable work such as a GPU readback.
+    pub fn add_side_effect_pass(
+        &mut self,
+        name: impl Into<String>,
+        reads: &[ResourceId],
+        writes: &[ResourceId],
+        data: P,
+    ) {
+        self.declare_pass(name.into(), reads, writes, data, true);
+    }
+
+    fn declare_pass(
+        &mut self,
+        name: String,
+        reads: &[ResourceId],
+        writes: &[ResourceId],
+        data: P,
+        has_side_effects: bool,
+    ) {
         self.passes.push(Pass {
-            name: name.into(),
+            name,
             reads: reads.to_vec(),
             writes: writes.to_vec(),
             data,
+            has_side_effects,
         });
     }
 
@@ -114,7 +140,7 @@ impl<P> RenderGraph<P> {
         self.exports.push(resource);
     }
 
-    /// Validates resource access and orders passes by their dependencies.
+    /// Validates all passes and orders those needed for outputs or side effects.
     ///
     /// Among passes that are ready, the one declared first executes first.
     pub fn compile(self) -> Result<CompiledGraph<P>, GraphError> {
@@ -129,8 +155,11 @@ impl<P> RenderGraph<P> {
                 }
             }
         }
+        let mut live = vec![false; self.passes.len()];
         for &resource in &self.exports {
-            self.producer(resource, "graph output", &producers)?;
+            if let Some(producer) = self.producer(resource, "graph output", &producers)? {
+                live[producer] = true;
+            }
         }
 
         let mut ready: BinaryHeap<_> = remaining
@@ -152,6 +181,18 @@ impl<P> RenderGraph<P> {
         if let Some(unresolved) = remaining.iter().position(|&count| count != 0) {
             return Err(self.cycle(unresolved, &producers, &remaining));
         }
+
+        // Visit consumers before producers so each live pass can mark its inputs.
+        for &index in order.iter().rev() {
+            let pass = &self.passes[index];
+            live[index] |= pass.has_side_effects;
+            if live[index] {
+                for producer in pass.reads.iter().filter_map(|id| producers[id.index]) {
+                    live[producer] = true;
+                }
+            }
+        }
+        order.retain(|&index| live[index]);
 
         Ok(CompiledGraph {
             passes: self.passes,
@@ -250,7 +291,7 @@ impl<P> CompiledGraph<P> {
         &self.exports
     }
 
-    /// Invokes the backend once per pass in compiled order, stopping on error.
+    /// Invokes the backend once per retained pass in compiled order, stopping on error.
     pub fn execute<E>(&self, mut run: impl FnMut(&Pass<P>) -> Result<(), E>) -> Result<(), E> {
         for &index in &self.order {
             run(&self.passes[index])?;

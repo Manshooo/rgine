@@ -49,6 +49,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
+- The render graph executes only passes that contribute to exported outputs or are declared with side effects, along with their dependencies. Register externally observable work with `add_side_effect_pass` (ADR 0015).
 - The workspace minimum Rust version is 1.87 to support wgpu 30.0.2 (ADR 0014).
 - `World::get` returns a `ComponentRef` guard so the shared borrow stays active while the reference is in use. Dereference the guard or use `Option::as_deref()` at call sites that need `Option<&T>`.
 - ADR 0010 is `Accepted`. It was recorded as `Proposed` when the model was written; phase 1 now implements it, and an issue carrying `needs-adr` does not start against a proposal.
