@@ -44,10 +44,12 @@ The cross-cutting iteration budget criterion in ROADMAP is not enforced yet; see
 
 Phase 2 uses wgpu 30.0.2 with minimum Rust 1.87. The [surface spike](https://github.com/Manshooo/rgine/issues/37) exercises the platform contract in [ADR 0014](docs/adr/0014-render-backend-and-surface-lifetime.md). The app presents a clear color through the regular window loop ([#38](https://github.com/Manshooo/rgine/issues/38)), and the clear pass now executes through the compiled render graph ([#39](https://github.com/Manshooo/rgine/issues/39), [ADR 0015](docs/adr/0015-render-graph.md)). The [quick start](README.md#первый-запуск) shows how to run the example and the input replay test.
 
+The graph culls unused passes and reuses transient allocations based on the retained passes ([#40](https://github.com/Manshooo/rgine/issues/40), [#41](https://github.com/Manshooo/rgine/issues/41), [ADR 0016](docs/adr/0016-transient-render-graph-allocations.md)). The device resource table supports vertex, index and uniform buffers with classic uniform bind groups ([#42](https://github.com/Manshooo/rgine/issues/42), [ADR 0017](docs/adr/0017-render-resource-table.md)).
+
 ## Next
 
-- Cull passes that contribute to neither exported outputs nor declared side effects ([#40](https://github.com/Manshooo/rgine/issues/40)), then reuse compatible transient allocations based on the retained passes ([#41](https://github.com/Manshooo/rgine/issues/41)).
-- Establish the resource table and classic bind-group backend ([#42](https://github.com/Manshooo/rgine/issues/42)), then render procedural meshes with a camera, depth testing and scene state extracted after ECS simulation ([#43](https://github.com/Manshooo/rgine/issues/43)).
+- Render procedural meshes with a camera, depth testing and scene state extracted after ECS simulation ([#43](https://github.com/Manshooo/rgine/issues/43)).
+- Add texture and sampler entries to the resource table ([#55](https://github.com/Manshooo/rgine/issues/55)), then implement the adapter-selected bindless profile ([#44](https://github.com/Manshooo/rgine/issues/44)).
 - The shader variant budget ([#45](https://github.com/Manshooo/rgine/issues/45)) and the reference measurement protocol ([#50](https://github.com/Manshooo/rgine/issues/50)) can start independently. The protocol defines the measurements for the Render v1 exit run ([#51](https://github.com/Manshooo/rgine/issues/51)).
 
 The [Render v1 milestone](https://github.com/Manshooo/rgine/milestone/3) tracks the remaining work and dependencies.
