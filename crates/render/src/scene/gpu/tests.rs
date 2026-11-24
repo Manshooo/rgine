@@ -108,6 +108,65 @@ fn classic_and_bindless_draw_the_same_materials() {
 
 #[test]
 #[ignore = "requires a native GPU adapter"]
+fn directional_shadow_darkens_the_receiver_and_follows_the_occluder() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let info = adapter.get_info();
+    let mut meshes = MeshRegistry::default();
+    let floor = meshes.insert(Mesh::plane().with_pbr_material(PbrMaterial::new(0.0, 0.85)));
+    let cube = meshes.insert(Mesh::cube());
+    let mut scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::look_at_rh(Vec3::Y * 6.0, Vec3::ZERO, Vec3::NEG_Z),
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: vec![
+            SceneObject {
+                mesh: floor,
+                transform: Mat4::from_scale(Vec3::splat(5.0)),
+                color: [0.7, 0.7, 0.7, 1.0],
+            },
+            SceneObject {
+                mesh: cube,
+                transform: Mat4::IDENTITY,
+                color: [0.8, 0.0, 0.0, 1.0],
+            },
+        ],
+    };
+    for force_classic in [true, false] {
+        let mut table = ResourceTable::request(&adapter, force_classic).unwrap();
+        let mut renderer = SceneRenderer {
+            light: DirectionalLight::new(Vec3::new(-1.0, 1.0, 0.0), 2.0).unwrap(),
+            ..Default::default()
+        };
+        scene.objects[1].transform = Mat4::from_translation(Vec3::new(-1.0, 0.75, 0.0));
+        let shadowed = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+        scene.objects[1].transform = Mat4::from_translation(Vec3::new(-1.0, 0.75, 1.5));
+        let moved = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+        let shadow = pixel(&shadowed, SIDE / 2, SIDE / 2);
+        let exposed = pixel(&moved, SIDE / 2, SIDE / 2);
+        let unaffected = pixel(&shadowed, 48, SIDE / 2);
+        assert!(
+            shadow[0] > 30 && exposed[0] > shadow[0] + 40,
+            "{shadow:?}, {exposed:?}"
+        );
+        assert_eq!(shadow[0], shadow[1], "the shadow lies on the gray floor");
+        assert_eq!(unaffected, pixel(&moved, 48, SIDE / 2));
+        assert!(unaffected[0] > shadow[0] + 40, "{unaffected:?}");
+        eprintln!(
+            "{} ({:?}, {:?}): shadowed floor {shadow:?}, after moving the occluder {exposed:?}, unshadowed floor {unaffected:?}",
+            info.name,
+            info.backend,
+            table.binding_mode(),
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
 fn metallic_and_roughness_change_direct_lighting() {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());

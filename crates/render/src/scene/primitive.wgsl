@@ -1,18 +1,5 @@
-struct Object {
-    clip_from_local: mat4x4<f32>,
-    world_from_local: mat4x4<f32>,
-    normal_from_local: mat3x3<f32>,
-    color: vec4<f32>,
-    eye: vec3<f32>,
-    light_intensity: f32,
-    direction_to_light: vec3<f32>,
-    metallic: f32,
-    roughness: f32,
-    texture_index: u32,
-    sampler_index: u32,
-}
-
-@group(0) @binding(0) var<uniform> object: Object;
+@group(2) @binding(0) var shadow_depth: texture_depth_2d;
+@group(2) @binding(1) var shadow_sampler: sampler_comparison;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -33,6 +20,15 @@ fn vertex(
     output.uv = uv;
     output.world_position = (object.world_from_local * vec4<f32>(position, 1.0)).xyz;
     return output;
+}
+
+fn shadow_visibility(world_position: vec3<f32>) -> f32 {
+    let clip = object.shadow_clip_from_world * vec4<f32>(world_position, 1.0);
+    let uv = clip.xy * vec2<f32>(0.5, -0.5) + 0.5;
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || clip.z < 0.0 || clip.z > 1.0 {
+        return 1.0;
+    }
+    return textureSampleCompareLevel(shadow_depth, shadow_sampler, uv, clip.z - 0.0001);
 }
 
 fn lit_color(input: VertexOutput, texel: vec4<f32>) -> vec4<f32> {
@@ -70,6 +66,7 @@ fn lit_color(input: VertexOutput, texel: vec4<f32>) -> vec4<f32> {
     let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - v_dot_h, 5.0);
     let diffuse = (vec3<f32>(1.0) - fresnel) * (1.0 - metallic) * base.rgb / pi;
     let specular = fresnel * distribution * visibility;
-    let direct = (diffuse + specular) * object.light_intensity * n_dot_l;
+    let direct = (diffuse + specular) * object.light_intensity * n_dot_l
+        * shadow_visibility(input.world_position);
     return vec4<f32>(ambient + direct, base.a);
 }
