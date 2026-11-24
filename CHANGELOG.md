@@ -75,6 +75,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `engine_platform::window::run_empty_window`. Opening a window is loop policy and belongs to `app`.
 
 ### Fixed
+- Graphics startup tries one native API at a time, preferring DX12 on Windows. The WGPU_BACKEND environment variable can restrict the available APIs.
 - `cargo check` for `aarch64-linux-android` failed because `android-activity` refuses to compile without a backend feature. `engine-platform` now selects `android-native-activity` for Android targets.
 - A closed window left the process running. The winit backend kept the default `Wait` control flow, so the loop slept instead of iterating: the application was updated only when the OS delivered an event, and the `Exit` command recorded from that update was applied on whatever unrelated message happened to arrive next. The backend now polls, which is also what the documented "once per loop iteration" contract and a fixed timestep require.
 - `actions/checkout` bumped to v5; v4 targets the deprecated Node.js 20 runtime.
