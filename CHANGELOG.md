@@ -7,6 +7,8 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The renderer prepares the scene pipelines before drawing and reports pipeline creations during frame delivery. CI validates the full scene catalogue in both resource binding modes.
+- The procedural scene uses diffuse hemisphere lighting to show a colored floor reflection on shaded dielectric surfaces.
 - The procedural scene renders directional cast shadows on metallic-roughness surfaces in both resource binding modes.
 - The procedural scene draws a generated skybox that follows camera rotation and stays behind opaque geometry.
 - Procedural meshes support metallic-roughness surfaces lit by a configurable directional light. The scene example compares smooth and rough dielectric and metal spheres using both resource binding modes.

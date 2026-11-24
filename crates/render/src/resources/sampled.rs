@@ -441,31 +441,35 @@ impl ResourceTable {
                 "the sampler binding role is incompatible with the texture sample type".into(),
             ));
         }
-        let key = LayoutKey {
-            sample_type: view.sample_type,
-            dimension: view.dimension,
-            sampler: sampler_type,
-        };
-        let (layout, raw) = checked_gpu(&self.device, || {
-            let layout = self
-                .sampled
-                .layouts
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| key.create(&self.device));
-            let raw = self.make_sampled_group(&layout, &texture.view, &sampler.raw);
-            (layout, raw)
+        let layout = self.sampled_layout(view, sampler_type)?.clone();
+        let texture = self.texture(binding.texture)?;
+        let sampler = self.sampler(binding.sampler)?;
+        let raw = checked_gpu(&self.device, || {
+            self.make_sampled_group(&layout, &texture.view, &sampler.raw)
         })?;
-        self.sampled
-            .layouts
-            .entry(key)
-            .or_insert_with(|| layout.clone());
         let group = self.sampled.groups.insert(SampledGroup {
             binding,
             layout,
             raw,
         });
         Ok(SampledGroupHandle(self.handle(group)))
+    }
+
+    pub(crate) fn sampled_layout(
+        &mut self,
+        view: TextureViewDescriptor,
+        sampler: wgpu::SamplerBindingType,
+    ) -> Result<&wgpu::BindGroupLayout, ResourceError> {
+        let key = LayoutKey {
+            sample_type: view.sample_type,
+            dimension: view.dimension,
+            sampler,
+        };
+        if !self.sampled.layouts.contains_key(&key) {
+            let layout = checked_gpu(&self.device, || key.create(&self.device))?;
+            self.sampled.layouts.insert(key, layout);
+        }
+        Ok(&self.sampled.layouts[&key])
     }
 
     /// Returns the resources bound by a live classic sampled group.

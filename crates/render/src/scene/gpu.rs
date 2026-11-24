@@ -1,9 +1,12 @@
 use std::collections::{HashMap, hash_map::Entry};
 use std::num::NonZeroU64;
+use std::time::Instant;
 
 use engine_core::glam::{Mat4, Vec3};
 
-use super::{DirectionalLight, Mesh, MeshKey, MeshRegistry, PbrMaterial, Scene, SceneObject};
+use super::{
+    DirectionalLight, HemisphereLight, Mesh, MeshKey, MeshRegistry, PbrMaterial, Scene, SceneObject,
+};
 use crate::RenderError;
 use crate::graph::{CompiledGraph, RenderGraph};
 use crate::resources::{
@@ -17,9 +20,18 @@ mod shadows;
 mod skybox;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(304).unwrap();
+const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(336).unwrap();
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
+
+pub(crate) const SCENE_COLOR_FORMATS: &[wgpu::TextureFormat] = &[
+    wgpu::TextureFormat::Bgra8UnormSrgb,
+    wgpu::TextureFormat::Bgra8Unorm,
+    wgpu::TextureFormat::Rgba8UnormSrgb,
+    wgpu::TextureFormat::Rgba8Unorm,
+    wgpu::TextureFormat::Rgb10a2Unorm,
+    wgpu::TextureFormat::Rgba16Float,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 struct ScenePipelineKey {
@@ -73,15 +85,87 @@ impl ScenePipelineKey {
             },
         }
     }
+
+    fn for_config(
+        format: wgpu::TextureFormat,
+        binding_mode: BindingMode,
+        skybox: bool,
+    ) -> impl Iterator<Item = Self> {
+        [Self::new(format, binding_mode), Self::DIRECTIONAL_SHADOW]
+            .into_iter()
+            .chain(skybox.then(|| Self::skybox(format)))
+    }
+}
+
+#[derive(Default)]
+struct ScenePipelines {
+    // Each successful factory call adds a key retained for the device lifetime.
+    entries: HashMap<ScenePipelineKey, wgpu::RenderPipeline>,
+    shadow_layout: Option<wgpu::BindGroupLayout>,
+}
+
+impl ScenePipelines {
+    fn prepare(
+        &mut self,
+        table: &mut ResourceTable,
+        format: wgpu::TextureFormat,
+        skybox: bool,
+    ) -> Result<(), RenderError> {
+        let mode = table.binding_mode();
+        let keys = || ScenePipelineKey::for_config(format, mode, skybox);
+        if keys().all(|key| self.entries.contains_key(&key)) {
+            return Ok(());
+        }
+        let start = Instant::now();
+        let before = self.entries.len();
+        let device = table.device.clone();
+        let uniforms = table.uniform_layout(1)?.clone();
+        if self.shadow_layout.is_none() {
+            self.shadow_layout = Some(shadows::lookup_layout(&device)?);
+        }
+        let shadow = self.shadow_layout.as_ref().expect("shadow layout prepared");
+        for key in keys() {
+            let Entry::Vacant(entry) = self.entries.entry(key) else {
+                continue;
+            };
+            let pipeline = if let ShaderVariantKey::Primitive(mode) = key.shader {
+                let sampled = match mode {
+                    BindingMode::Classic => table.sampled_layout(
+                        TextureDescriptor::sampled_rgba8([1, 1]).view,
+                        wgpu::SamplerBindingType::Filtering,
+                    )?,
+                    BindingMode::Bindless => table.bindless_layout()?,
+                };
+                create_pipeline(
+                    &device,
+                    key,
+                    &[Some(&uniforms), Some(sampled), Some(shadow)],
+                )?
+            } else {
+                create_pipeline(&device, key, &[Some(&uniforms)])?
+            };
+            entry.insert(pipeline);
+            tracing::debug!(?key, "scene pipeline created");
+        }
+        tracing::info!(
+            ?format,
+            binding_mode = ?mode,
+            skybox,
+            pipeline_creations = self.entries.len() - before,
+            elapsed_ms = start.elapsed().as_secs_f64() * 1000.0,
+            "scene pipelines prepared"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct SceneRenderer {
     pub(crate) light: DirectionalLight,
+    pub(crate) hemisphere_light: HemisphereLight,
     pub(crate) skybox_enabled: bool,
     skybox: Option<skybox::Skybox>,
-    pipeline: Option<(ScenePipelineKey, wgpu::RenderPipeline)>,
-    shadow_pipeline: Option<wgpu::RenderPipeline>,
+    pipelines: ScenePipelines,
     target: Option<SceneTargets>,
     meshes: HashMap<MeshKey, GpuMesh>,
     materials: [Option<MaterialBinding>; 2],
@@ -89,20 +173,41 @@ pub(crate) struct SceneRenderer {
 }
 
 impl SceneRenderer {
+    pub(crate) fn prepare_pipelines(
+        &mut self,
+        table: &mut ResourceTable,
+        format: wgpu::TextureFormat,
+    ) -> Result<(), RenderError> {
+        self.pipelines.prepare(table, format, self.skybox_enabled)
+    }
+
+    pub(crate) fn pipeline_creations(&self) -> usize {
+        self.pipelines.entries.len()
+    }
+
     pub(crate) fn prepare(
         &mut self,
         table: &mut ResourceTable,
         meshes: &MeshRegistry,
         scene: &Scene,
         size: [u32; 2],
-        format: wgpu::TextureFormat,
     ) -> Result<(), RenderError> {
         if self
             .target
             .as_ref()
             .is_none_or(|target| target.size != size || target.skybox != self.skybox_enabled)
         {
-            self.target = Some(SceneTargets::new(table, size, self.skybox_enabled)?);
+            let shadow_layout = self
+                .pipelines
+                .shadow_layout
+                .as_ref()
+                .expect("pipelines prepared");
+            self.target = Some(SceneTargets::new(
+                table,
+                size,
+                self.skybox_enabled,
+                shadow_layout,
+            )?);
         }
         let Some(camera) = scene.camera else {
             return Ok(());
@@ -112,12 +217,12 @@ impl SceneRenderer {
             .ok_or_else(|| RenderError("invalid perspective camera or drawable size".into()))?;
         if self.skybox_enabled {
             if self.skybox.is_none() {
-                self.skybox = Some(skybox::Skybox::new(table, format)?);
+                self.skybox = Some(skybox::Skybox::new(table)?);
             }
             self.skybox
                 .as_mut()
                 .expect("skybox allocated")
-                .prepare(table, format, camera, size)?;
+                .prepare(table, camera, size)?;
         }
         let eye = if camera.view.determinant() != 0.0 {
             camera.view.inverse().w_axis.truncate()
@@ -149,32 +254,6 @@ impl SceneRenderer {
         if mode == BindingMode::Bindless {
             table.prepare_bindless()?;
         }
-        let key = ScenePipelineKey::new(format, mode);
-        if self
-            .pipeline
-            .as_ref()
-            .is_none_or(|(current, _)| *current != key)
-        {
-            let material = self
-                .materials
-                .iter()
-                .flatten()
-                .next()
-                .expect("scene material prepared");
-            let uniforms = table.uniform_layout(1)?.clone();
-            let sampled = material.layout(table)?;
-            let shadow = &self.target.as_ref().expect("scene targets prepared").shadow;
-            let layouts = [Some(&uniforms), Some(sampled), Some(&shadow.layout)];
-            self.pipeline = Some((key, create_pipeline(&table.device, key, &layouts)?));
-        }
-        if self.shadow_pipeline.is_none() {
-            let uniforms = table.uniform_layout(1)?.clone();
-            self.shadow_pipeline = Some(create_pipeline(
-                &table.device,
-                ScenePipelineKey::DIRECTIONAL_SHADOW,
-                &[Some(&uniforms)],
-            )?);
-        }
         if self.uniforms.is_none() {
             self.uniforms = Some(ObjectUniforms::new(table, scene.objects.len())?);
         }
@@ -184,6 +263,7 @@ impl SceneRenderer {
             clip,
             eye,
             light: self.light,
+            hemisphere_light: self.hemisphere_light,
             shadow_clip: shadows::clip_from_world(self.light, &scene.objects, &self.meshes),
         };
         self.uniforms
@@ -204,6 +284,7 @@ impl SceneRenderer {
         scene: &Scene,
         encoder: &mut wgpu::CommandEncoder,
         output: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
         clear: wgpu::Color,
     ) -> Result<(), RenderError> {
         let target = self.target.as_ref().expect("scene targets prepared");
@@ -228,6 +309,7 @@ impl SceneRenderer {
                         self.skybox.as_ref().expect("skybox prepared").encode(
                             table,
                             encoder,
+                            &self.pipelines.entries[&ScenePipelineKey::skybox(format)],
                             output,
                             clear,
                             pass.name(),
@@ -264,7 +346,8 @@ impl SceneRenderer {
             });
             if has_draws {
                 let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
-                let (_, pipeline) = self.pipeline.as_ref().expect("scene pipeline prepared");
+                let key = ScenePipelineKey::new(format, table.binding_mode());
+                let pipeline = &self.pipelines.entries[&key];
                 render.set_pipeline(pipeline);
                 render.set_bind_group(2, &target.shadow.group, &[]);
                 if table.binding_mode() == BindingMode::Bindless {
@@ -305,11 +388,7 @@ impl SceneRenderer {
             }),
             ..Default::default()
         });
-        render.set_pipeline(
-            self.shadow_pipeline
-                .as_ref()
-                .expect("shadow pipeline prepared"),
-        );
+        render.set_pipeline(&self.pipelines.entries[&ScenePipelineKey::DIRECTIONAL_SHADOW]);
         let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
         for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
             render.set_bind_group(0, table.gpu_uniform_group(*group)?, &[]);
@@ -341,7 +420,12 @@ struct SceneTargets {
 }
 
 impl SceneTargets {
-    fn new(table: &ResourceTable, size: [u32; 2], skybox: bool) -> Result<Self, RenderError> {
+    fn new(
+        table: &ResourceTable,
+        size: [u32; 2],
+        skybox: bool,
+        shadow_layout: &wgpu::BindGroupLayout,
+    ) -> Result<Self, RenderError> {
         let mut graph = RenderGraph::with_transient_descriptors();
         let color = graph.import("drawable color");
         let depth = graph.transient_with_descriptor(
@@ -423,7 +507,7 @@ impl SceneTargets {
                 .clone()
         };
         let depth = view(depth);
-        let shadow = shadows::ShadowTarget::new(&table.device, view(shadow))?;
+        let shadow = shadows::ShadowTarget::new(&table.device, shadow_layout, view(shadow))?;
         Ok(Self {
             size,
             skybox,
@@ -552,13 +636,6 @@ impl MaterialBinding {
             Self::Bindless(indices) => indices,
         }
     }
-
-    fn layout(self, table: &ResourceTable) -> Result<&wgpu::BindGroupLayout, ResourceError> {
-        match self {
-            Self::Classic(group) => Ok(&table.sampled_group(group)?.layout),
-            Self::Bindless(_) => table.bindless_layout(),
-        }
-    }
 }
 
 fn upload_buffer(
@@ -588,6 +665,7 @@ struct SceneUniforms {
     clip: Mat4,
     eye: Vec3,
     light: DirectionalLight,
+    hemisphere_light: HemisphereLight,
     shadow_clip: Mat4,
 }
 
@@ -665,9 +743,15 @@ impl ObjectUniforms {
             }
             slot[228..232].copy_from_slice(&texture.to_le_bytes());
             slot[232..236].copy_from_slice(&sampler.to_le_bytes());
-            for (bytes, value) in slot[240..304]
+            let lighting = frame
+                .shadow_clip
+                .to_cols_array()
+                .into_iter()
+                .chain(frame.hemisphere_light.upper.extend(0.0).to_array())
+                .chain(frame.hemisphere_light.lower.extend(0.0).to_array());
+            for (bytes, value) in slot[240..UNIFORM_SIZE.get() as usize]
                 .chunks_exact_mut(4)
-                .zip(frame.shadow_clip.to_cols_array())
+                .zip(lighting)
             {
                 bytes.copy_from_slice(&value.to_le_bytes());
             }
@@ -725,7 +809,7 @@ fn create_pipeline(
         blend: None,
         write_mask: wgpu::ColorWrites::ALL,
     })];
-    Ok(checked_gpu(device, || {
+    checked_gpu(device, || {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -765,7 +849,8 @@ fn create_pipeline(
             multiview_mask: None,
             cache: None,
         })
-    })?)
+    })
+    .map_err(|error| RenderError(format!("invalid scene pipeline {key:?}: {error}")))
 }
 
 #[cfg(test)]

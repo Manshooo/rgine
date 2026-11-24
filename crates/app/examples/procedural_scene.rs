@@ -5,7 +5,8 @@ use engine_app::core::glam::{Mat4, Vec3};
 use engine_app::ecs::{Component, World};
 use engine_app::platform::{Input, KeyCode, PhysicalKey, WindowDesc};
 use engine_app::scene::{
-    Camera, DirectionalLight, Mesh, MeshRegistry, PbrMaterial, Renderable, Transform,
+    Camera, DirectionalLight, HemisphereLight, Mesh, MeshRegistry, PbrMaterial, Renderable,
+    Transform,
 };
 use engine_app::{App, RenderError};
 
@@ -21,9 +22,11 @@ fn main() -> Result<(), RenderError> {
             .with_checkerboard()
             .with_pbr_material(PbrMaterial::new(0.0, 0.82)),
     );
+    let floor_color = Vec3::new(0.09, 0.17, 0.34);
     let mut app = App::new()
         .with_window(WindowDesc::new("rgine - procedural scene").with_size(960, 640))
         .with_skybox()
+        .with_hemisphere_light(HemisphereLight::new(Vec3::splat(0.20), floor_color * 0.85).unwrap())
         .with_directional_light(DirectionalLight::new(Vec3::new(-1.0, 0.85, -0.25), 3.2).unwrap());
     let mut orbit = Orbit {
         yaw: 0.28,
@@ -59,7 +62,11 @@ fn main() -> Result<(), RenderError> {
                 sphere,
                 Renderable {
                     mesh,
-                    color: [0.72, 0.39, 0.12, 1.0],
+                    color: if metallic == 0.0 {
+                        [0.66, 0.61, 0.52, 1.0]
+                    } else {
+                        [0.72, 0.39, 0.12, 1.0]
+                    },
                 },
             )
             .unwrap();
@@ -80,7 +87,7 @@ fn main() -> Result<(), RenderError> {
             floor,
             Renderable {
                 mesh: plane,
-                color: [0.13, 0.17, 0.25, 1.0],
+                color: floor_color.extend(1.0).to_array(),
             },
         )
         .unwrap();
