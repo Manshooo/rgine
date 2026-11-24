@@ -4,6 +4,7 @@
 
 mod drawable;
 pub mod graph;
+pub mod resources;
 
 pub use drawable::{DrawOutcome, Drawable, RenderError};
 

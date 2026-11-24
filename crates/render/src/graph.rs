@@ -3,7 +3,13 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt;
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod allocations;
+
+use allocations::AllocationPlan;
+pub use allocations::{ResourceLifetime, TransientAllocationId, TransientAllocations};
 
 static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -14,9 +20,15 @@ pub struct ResourceId {
     index: usize,
 }
 
-struct Resource {
+struct Resource<D> {
     name: String,
-    imported: bool,
+    kind: ResourceKind<D>,
+}
+
+enum ResourceKind<D> {
+    Imported,
+    Persistent,
+    Transient(Option<D>),
 }
 
 /// A pass declaration and the data used to execute it.
@@ -25,6 +37,7 @@ pub struct Pass<P> {
     reads: Vec<ResourceId>,
     writes: Vec<ResourceId>,
     data: P,
+    has_side_effects: bool,
 }
 
 impl<P> Pass<P> {
@@ -50,9 +63,9 @@ impl<P> Pass<P> {
 }
 
 /// A graph under construction. Each logical resource has at most one writer.
-pub struct RenderGraph<P> {
+pub struct RenderGraph<P, D = ()> {
     id: u64,
-    resources: Vec<Resource>,
+    resources: Vec<Resource<D>>,
     passes: Vec<Pass<P>>,
     exports: Vec<ResourceId>,
 }
@@ -66,6 +79,14 @@ impl<P> Default for RenderGraph<P> {
 impl<P> RenderGraph<P> {
     /// Creates an empty graph with its own resource handles.
     pub fn new() -> Self {
+        Self::with_transient_descriptors()
+    }
+}
+
+impl<P, D> RenderGraph<P, D> {
+    /// Creates a graph with a caller-defined descriptor for transient storage.
+    /// Equal descriptors must describe interchangeable physical storage.
+    pub fn with_transient_descriptors() -> Self {
         Self {
             id: NEXT_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
             resources: Vec::new(),
@@ -76,24 +97,40 @@ impl<P> RenderGraph<P> {
 
     /// Declares a resource supplied by the caller, such as a drawable texture.
     pub fn import(&mut self, name: impl Into<String>) -> ResourceId {
-        self.resource(name.into(), true)
+        self.resource(name.into(), ResourceKind::Imported)
     }
 
-    /// Declares a resource whose contents a pass must produce before use.
+    /// Declares caller-owned storage that keeps its contents between executions.
+    pub fn persistent(&mut self, name: impl Into<String>) -> ResourceId {
+        self.resource(name.into(), ResourceKind::Persistent)
+    }
+
+    /// Declares a logical dependency whose contents a pass must produce before use.
+    /// The graph assigns physical storage only for transients with a descriptor.
     pub fn transient(&mut self, name: impl Into<String>) -> ResourceId {
-        self.resource(name.into(), false)
+        self.resource(name.into(), ResourceKind::Transient(None))
     }
 
-    fn resource(&mut self, name: String, imported: bool) -> ResourceId {
+    /// Declares a transient with graph-planned physical storage.
+    /// The producer must initialize the contents its consumers read.
+    pub fn transient_with_descriptor(
+        &mut self,
+        name: impl Into<String>,
+        descriptor: D,
+    ) -> ResourceId {
+        self.resource(name.into(), ResourceKind::Transient(Some(descriptor)))
+    }
+
+    fn resource(&mut self, name: String, kind: ResourceKind<D>) -> ResourceId {
         let id = ResourceId {
             graph: self.id,
             index: self.resources.len(),
         };
-        self.resources.push(Resource { name, imported });
+        self.resources.push(Resource { name, kind });
         id
     }
 
-    /// Declares a pass. The order of its dependencies is resolved at compile time.
+    /// Declares a pass that runs if an exported result or a side effect needs it.
     pub fn add_pass(
         &mut self,
         name: impl Into<String>,
@@ -101,11 +138,36 @@ impl<P> RenderGraph<P> {
         writes: &[ResourceId],
         data: P,
     ) {
+        self.declare_pass(name.into(), reads, writes, data, false);
+    }
+
+    /// Declares a pass that must run even if none of its outputs are consumed.
+    ///
+    /// Use this for externally observable work such as a GPU readback.
+    pub fn add_side_effect_pass(
+        &mut self,
+        name: impl Into<String>,
+        reads: &[ResourceId],
+        writes: &[ResourceId],
+        data: P,
+    ) {
+        self.declare_pass(name.into(), reads, writes, data, true);
+    }
+
+    fn declare_pass(
+        &mut self,
+        name: String,
+        reads: &[ResourceId],
+        writes: &[ResourceId],
+        data: P,
+        has_side_effects: bool,
+    ) {
         self.passes.push(Pass {
-            name: name.into(),
+            name,
             reads: reads.to_vec(),
             writes: writes.to_vec(),
             data,
+            has_side_effects,
         });
     }
 
@@ -114,10 +176,13 @@ impl<P> RenderGraph<P> {
         self.exports.push(resource);
     }
 
-    /// Validates resource access and orders passes by their dependencies.
+    /// Validates all passes, orders the retained passes and plans transient allocations.
     ///
     /// Among passes that are ready, the one declared first executes first.
-    pub fn compile(self) -> Result<CompiledGraph<P>, GraphError> {
+    pub fn compile(self) -> Result<CompiledGraph<P, D>, GraphError>
+    where
+        D: Clone + Eq + Hash,
+    {
         let producers = self.producers()?;
         let mut remaining = vec![0; self.passes.len()];
         let mut dependents = vec![Vec::new(); self.passes.len()];
@@ -129,8 +194,11 @@ impl<P> RenderGraph<P> {
                 }
             }
         }
+        let mut live = vec![false; self.passes.len()];
         for &resource in &self.exports {
-            self.producer(resource, "graph output", &producers)?;
+            if let Some(producer) = self.producer(resource, "graph output", &producers)? {
+                live[producer] = true;
+            }
         }
 
         let mut ready: BinaryHeap<_> = remaining
@@ -153,10 +221,30 @@ impl<P> RenderGraph<P> {
             return Err(self.cycle(unresolved, &producers, &remaining));
         }
 
+        // Visit consumers before producers so each live pass can mark its inputs.
+        for &index in order.iter().rev() {
+            let pass = &self.passes[index];
+            live[index] |= pass.has_side_effects;
+            if live[index] {
+                for producer in pass.reads.iter().filter_map(|id| producers[id.index]) {
+                    live[producer] = true;
+                }
+            }
+        }
+        order.retain(|&index| live[index]);
+
+        let allocations = AllocationPlan::new(
+            self.id,
+            &self.resources,
+            &self.passes,
+            &order,
+            &self.exports,
+        );
         Ok(CompiledGraph {
             passes: self.passes,
             order,
             exports: self.exports,
+            allocations,
         })
     }
 
@@ -196,7 +284,7 @@ impl<P> RenderGraph<P> {
     ) -> Result<Option<usize>, GraphError> {
         let index = self.checked_resource(resource, consumer)?;
         let producer = producers[index];
-        if producer.is_none() && !self.resources[index].imported {
+        if producer.is_none() && matches!(self.resources[index].kind, ResourceKind::Transient(_)) {
             return Err(GraphError::MissingProducer {
                 resource: self.resources[index].name.clone(),
                 consumer: consumer.to_owned(),
@@ -238,19 +326,44 @@ impl<P> RenderGraph<P> {
 }
 
 /// A validated graph ready to execute with the caller's resource bindings.
-pub struct CompiledGraph<P> {
+pub struct CompiledGraph<P, D = ()> {
     passes: Vec<Pass<P>>,
     order: Vec<usize>,
     exports: Vec<ResourceId>,
+    allocations: AllocationPlan<D>,
 }
 
-impl<P> CompiledGraph<P> {
+impl<P, D> CompiledGraph<P, D> {
     /// Declared outputs, in export order.
     pub fn exports(&self) -> &[ResourceId] {
         &self.exports
     }
 
-    /// Invokes the backend once per pass in compiled order, stopping on error.
+    /// The interval of retained accesses to a resource, including any export.
+    pub fn resource_lifetime(&self, resource: ResourceId) -> Option<ResourceLifetime> {
+        self.allocations.lifetime(resource)
+    }
+
+    /// The physical allocation for a live transient declared with a descriptor.
+    pub fn transient_allocation(&self, resource: ResourceId) -> Option<TransientAllocationId> {
+        self.allocations.allocation(resource)
+    }
+
+    /// The number of physical allocations needed by all live, described transients.
+    pub fn transient_allocation_count(&self) -> usize {
+        self.allocations.len()
+    }
+
+    /// Creates one backend object per physical allocation, in slot order.
+    /// Keep the returned objects alive while executing the graph.
+    pub fn allocate_transients<T, E>(
+        &self,
+        allocate: impl FnMut(&D) -> Result<T, E>,
+    ) -> Result<TransientAllocations<T>, E> {
+        self.allocations.allocate(allocate)
+    }
+
+    /// Invokes the backend once per retained pass in compiled order, stopping on error.
     pub fn execute<E>(&self, mut run: impl FnMut(&Pass<P>) -> Result<(), E>) -> Result<(), E> {
         for &index in &self.order {
             run(&self.passes[index])?;

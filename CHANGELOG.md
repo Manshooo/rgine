@@ -7,6 +7,8 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Each drawable owns a resource table for vertex, index and uniform buffers with device-scoped handles and classic uniform bind groups (ADR 0017).
+- The compiled render graph plans physical storage after pass culling. Described transients with equal descriptors reuse one backend allocation when their lifetimes do not overlap (ADR 0016).
 - A compiled render graph validates resource dependencies and runs passes in deterministic order. The clear-window example presents the graph's exported backbuffer (ADR 0015).
 - The windowed App loop can present GPU frames on redraw and release its drawable on suspension. Run `cargo run --locked -p engine-app --example clear_window` for the clear-color example (ADR 0014).
 - A wgpu 30.0.2 surface example exercises clear-color presentation, resize and recreation through the platform's native drawable lifecycle (ADR 0014).
@@ -49,6 +51,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
+- The render graph executes only passes that contribute to exported outputs or are declared with side effects, along with their dependencies. Register externally observable work with `add_side_effect_pass` (ADR 0015).
 - The workspace minimum Rust version is 1.87 to support wgpu 30.0.2 (ADR 0014).
 - `World::get` returns a `ComponentRef` guard so the shared borrow stays active while the reference is in use. Dereference the guard or use `Option::as_deref()` at call sites that need `Option<&T>`.
 - ADR 0010 is `Accepted`. It was recorded as `Proposed` when the model was written; phase 1 now implements it, and an issue carrying `needs-adr` does not start against a proposal.

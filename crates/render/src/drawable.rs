@@ -4,6 +4,7 @@ use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
+use crate::resources::ResourceTable;
 
 /// A GPU or surface failure reported without exposing backend types.
 #[derive(Debug)]
@@ -36,8 +37,7 @@ pub struct Drawable {
     source: SurfaceSource,
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    resources: ResourceTable,
     frame_graph: CompiledGraph<()>,
     size: [u32; 2],
     needs_configure: bool,
@@ -69,12 +69,16 @@ impl Drawable {
             source,
             instance,
             adapter,
-            device,
-            queue,
+            resources: ResourceTable::new(device, queue),
             frame_graph,
             size,
             needs_configure: true,
         })
+    }
+
+    /// Accesses this device's resource table before preparing the next frame.
+    pub fn resources(&mut self) -> &mut ResourceTable {
+        &mut self.resources
     }
 
     /// Records the current size in physical pixels for the next redraw.
@@ -95,7 +99,7 @@ impl Drawable {
 
     fn configure(&self, surface: &wgpu::Surface<'_>) -> Result<(), RenderError> {
         let [width, height] = self.size;
-        let limit = self.device.limits().max_texture_dimension_2d;
+        let limit = self.resources.device.limits().max_texture_dimension_2d;
         if width > limit || height > limit {
             return Err(RenderError(format!(
                 "drawable size {width}x{height} exceeds the device limit of {limit}"
@@ -104,7 +108,7 @@ impl Drawable {
         let config = surface
             .get_default_config(&self.adapter, width, height)
             .ok_or_else(|| RenderError("graphics adapter does not support the surface".into()))?;
-        surface.configure(&self.device, &config);
+        surface.configure(&self.resources.device, &config);
         Ok(())
     }
 
@@ -143,11 +147,14 @@ impl Drawable {
         };
 
         let view = frame.texture.create_view(&Default::default());
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = self
+            .resources
+            .device
+            .create_command_encoder(&Default::default());
         self.encode_frame(&mut encoder, &view, wgpu::Color { r, g, b, a })?;
-        self.queue.submit([encoder.finish()]);
+        self.resources.queue.submit([encoder.finish()]);
         self.source.pre_present_notify();
-        self.queue.present(frame);
+        self.resources.queue.present(frame);
         self.needs_configure = suboptimal;
         tracing::debug!(
             width = self.size[0],
