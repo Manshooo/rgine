@@ -55,7 +55,11 @@ fn classic_and_bindless_draw_the_same_materials() {
 
     let mut meshes = MeshRegistry::default();
     let solid = meshes.insert(Mesh::cube());
-    let checker = meshes.insert(Mesh::cube().with_checkerboard());
+    let checker = meshes.insert(
+        Mesh::cube()
+            .with_checkerboard()
+            .with_pbr_material(PbrMaterial::new(0.25, 0.55)),
+    );
     let scene = Scene {
         camera: Some(SceneCamera {
             view: Mat4::IDENTITY,
@@ -99,6 +103,60 @@ fn classic_and_bindless_draw_the_same_materials() {
     );
     eprintln!(
         "matched {SIDE}x{SIDE} frames with solid {solid:?} and checkerboard {red_a:?}, {red_b:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn metallic_and_roughness_change_direct_lighting() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let info = adapter.get_info();
+    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut meshes = MeshRegistry::default();
+    let keys = [(0.0, 0.30), (0.0, 0.72), (1.0, 0.30), (1.0, 0.72)].map(|(metallic, roughness)| {
+        meshes.insert(Mesh::sphere().with_pbr_material(PbrMaterial::new(metallic, roughness)))
+    });
+    let mut scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: vec![SceneObject {
+            mesh: keys[0],
+            transform: Mat4::from_translation(Vec3::new(0.0, 0.0, -2.5)),
+            color: [0.55, 0.27, 0.09, 1.0],
+        }],
+    };
+    let mut renderer = SceneRenderer {
+        light: DirectionalLight::new(Vec3::Z, 0.30).unwrap(),
+        ..Default::default()
+    };
+    let [
+        smooth_dielectric,
+        rough_dielectric,
+        smooth_metal,
+        rough_metal,
+    ] = keys.map(|key| {
+        scene.objects[0].mesh = key;
+        center_pixel(&mut renderer, &mut table, &meshes, &scene)
+    });
+    assert!(smooth_dielectric[0] > rough_dielectric[0] + 8);
+    assert!(smooth_metal[0] > rough_metal[0] + 16);
+    assert!(rough_dielectric[0] > rough_metal[0] + 4);
+    assert!(smooth_dielectric[2] > 12, "{smooth_dielectric:?}");
+    assert!(smooth_metal[2] < smooth_metal[0], "{smooth_metal:?}");
+
+    renderer.light = DirectionalLight::new(Vec3::NEG_Z, 0.30).unwrap();
+    let backlit_metal = center_pixel(&mut renderer, &mut table, &meshes, &scene);
+    assert!(rough_metal[0] > backlit_metal[0] + 4);
+    eprintln!(
+        "{} ({:?}): smooth/rough dielectric {smooth_dielectric:?} / {rough_dielectric:?}, \
+         smooth/rough metal {smooth_metal:?} / {rough_metal:?}, backlit {backlit_metal:?}",
+        info.name, info.backend,
     );
 }
 

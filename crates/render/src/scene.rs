@@ -57,11 +57,65 @@ struct Vertex {
     uv: [f32; 2],
 }
 
+/// Metallic-roughness parameters for an opaque mesh surface.
+/// The instance color and any sampled texture provide its base color.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PbrMaterial {
+    /// Zero for a dielectric, one for a metal.
+    pub metallic: f32,
+    /// Perceptual roughness from zero (smooth) to one (rough).
+    pub roughness: f32,
+}
+
+impl PbrMaterial {
+    /// Creates a surface, clamping finite inputs to the supported range.
+    pub fn new(metallic: f32, roughness: f32) -> Self {
+        Self {
+            metallic: if metallic.is_finite() {
+                metallic.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            roughness: if roughness.is_finite() {
+                roughness.clamp(0.0, 1.0)
+            } else {
+                0.5
+            },
+        }
+    }
+}
+
+/// The direct light used by the opaque scene pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalLight {
+    direction_to_light: Vec3,
+    intensity: f32,
+}
+
+impl DirectionalLight {
+    /// Creates a white directional light from a vector pointing toward the light
+    /// and a nonnegative linear intensity. Returns `None` for invalid inputs.
+    pub fn new(direction_to_light: Vec3, intensity: f32) -> Option<Self> {
+        let direction_to_light = direction_to_light.try_normalize()?;
+        (intensity.is_finite() && intensity >= 0.0).then_some(Self {
+            direction_to_light,
+            intensity,
+        })
+    }
+}
+
+impl Default for DirectionalLight {
+    fn default() -> Self {
+        Self::new(Vec3::new(-0.5, 1.0, 0.8), 3.2).expect("valid default scene light")
+    }
+}
+
 /// Indexed procedural geometry with a position and normal at each vertex.
 pub struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     checkerboard: bool,
+    material: Option<PbrMaterial>,
 }
 
 impl Mesh {
@@ -71,6 +125,7 @@ impl Mesh {
             vertices: Vec::with_capacity(24),
             indices: Vec::with_capacity(36),
             checkerboard: false,
+            material: None,
         };
         for (normal, tangent) in [
             (Vec3::X, Vec3::Y),
@@ -91,9 +146,60 @@ impl Mesh {
             vertices: Vec::with_capacity(4),
             indices: Vec::with_capacity(6),
             checkerboard: false,
+            material: None,
         };
         mesh.quad(Vec3::ZERO, Vec3::Y, Vec3::X);
         mesh
+    }
+
+    /// A smooth sphere of diameter one centered at the origin.
+    pub fn sphere() -> Self {
+        const RINGS: u32 = 24;
+        const SEGMENTS: u32 = 48;
+        let mut vertices = Vec::with_capacity(((RINGS + 1) * (SEGMENTS + 1)) as usize);
+        let mut indices = Vec::with_capacity((6 * SEGMENTS * (RINGS - 1)) as usize);
+        for ring in 0..=RINGS {
+            let v = ring as f32 / RINGS as f32;
+            let (radius, y) = (v * std::f32::consts::PI).sin_cos();
+            for segment in 0..=SEGMENTS {
+                let u = segment as f32 / SEGMENTS as f32;
+                let (z, x) = (u * std::f32::consts::TAU).sin_cos();
+                let normal = match ring {
+                    0 => Vec3::Y,
+                    RINGS => Vec3::NEG_Y,
+                    _ => Vec3::new(radius * x, y, radius * z),
+                };
+                vertices.push(Vertex {
+                    position: normal * 0.5,
+                    normal,
+                    uv: [u, v],
+                });
+            }
+        }
+        for ring in 0..RINGS {
+            for segment in 0..SEGMENTS {
+                let upper = ring * (SEGMENTS + 1) + segment;
+                let lower = upper + SEGMENTS + 1;
+                if ring != 0 {
+                    indices.extend([upper, upper + 1, lower + 1]);
+                }
+                if ring != RINGS - 1 {
+                    indices.extend([upper, lower + 1, lower]);
+                }
+            }
+        }
+        Self {
+            vertices,
+            indices,
+            checkerboard: false,
+            material: None,
+        }
+    }
+
+    /// Uses a metallic-roughness surface on this mesh.
+    pub fn with_pbr_material(mut self, material: PbrMaterial) -> Self {
+        self.material = Some(PbrMaterial::new(material.metallic, material.roughness));
+        self
     }
 
     /// Samples a built-in checkerboard on each face, tinted by the object's color.

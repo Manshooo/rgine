@@ -36,6 +36,7 @@ pub struct App {
     simulation: Simulation,
     update: StageId,
     window: WindowDesc,
+    directional_light: scene::DirectionalLight,
 }
 
 impl Default for App {
@@ -46,6 +47,7 @@ impl Default for App {
             simulation,
             update,
             window: WindowDesc::new("rgine - bootstrap"),
+            directional_light: scene::DirectionalLight::default(),
         }
     }
 }
@@ -102,6 +104,12 @@ impl App {
         self
     }
 
+    /// Sets the direct light for the scene rendered by [`Self::run_scene`].
+    pub fn with_directional_light(mut self, light: scene::DirectionalLight) -> Self {
+        self.directional_light = light;
+        self
+    }
+
     /// Runs the application until its window is closed.
     pub fn run(self) -> Result<(), PlatformError> {
         engine_platform::run(&mut Runner::new(self))
@@ -119,7 +127,12 @@ impl App {
         meshes: scene::MeshRegistry,
         clear_color: [f64; 4],
     ) -> Result<(), RenderError> {
-        let frames = Frames::with_scene(clear_color, meshes, self.simulation.world());
+        let frames = Frames::with_scene(
+            clear_color,
+            meshes,
+            self.simulation.world(),
+            self.directional_light,
+        );
         self.run_with_frames(frames)
     }
 
