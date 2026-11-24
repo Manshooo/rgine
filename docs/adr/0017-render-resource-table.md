@@ -1,6 +1,6 @@
 # ADR 0017 — Render resource table
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-24
 - Tracking issue: [#42](https://github.com/Manshooo/rgine/issues/42)
 
