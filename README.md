@@ -61,6 +61,20 @@ cargo test --locked -p engine-app --test input_replay
 
 Тест записывает ввод по шагам симуляции, сериализует запись в JSON и воспроизводит её на заново собранной симуляции. Затем он сравнивает итоговое состояние ECS.
 
+## Выбор графического API
+
+На Windows движок сначала пробует DX12, на macOS — Metal, на Linux и Android — Vulkan. При ошибке инициализации он пробует следующий доступный API.
+
+Для диагностики можно ограничить автоматический выбор переменной `WGPU_BACKEND`. В PowerShell можно явно выбрать DX12 для текущего запуска.
+
+```powershell
+$env:WGPU_BACKEND = 'dx12'
+cargo run --locked -p engine-app --example clear_window
+Remove-Item Env:WGPU_BACKEND
+```
+
+Переменная `RUST_LOG=engine_render=info` включает сообщения о неудачных попытках и выбранном GPU-бэкенде в примерах приложения.
+
 ## Лицензия
 
 Двойная лицензия, на выбор пользователя:

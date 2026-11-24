@@ -1,5 +1,6 @@
-//! Device-scoped buffer handles and classic uniform bindings.
+//! Device-scoped GPU resources and classic bind groups.
 
+mod sampled;
 mod slots;
 
 use std::collections::HashMap;
@@ -8,6 +9,12 @@ use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use slots::{SlotKey, Slots};
+
+pub use sampled::{
+    CompareFunction, SampledBinding, SampledGroupHandle, SamplerAddressMode, SamplerDescriptor,
+    SamplerFilter, SamplerHandle, SamplerKind, TextureDescriptor, TextureFormat, TextureHandle,
+    TextureSampleType, TextureViewDescriptor, TextureViewDimension,
+};
 
 static NEXT_TABLE: AtomicU64 = AtomicU64::new(0);
 
@@ -99,7 +106,7 @@ struct UniformGroup {
     raw: wgpu::BindGroup,
 }
 
-/// Owns buffers and bind groups for a single drawable device.
+/// Owns GPU resources and bind groups for a single drawable device.
 ///
 /// Update this table after submitting the previous frame and before encoding the next.
 pub struct ResourceTable {
@@ -110,6 +117,7 @@ pub struct ResourceTable {
     buffers: Slots<Buffer>,
     groups: Slots<UniformGroup>,
     layouts: HashMap<usize, wgpu::BindGroupLayout>,
+    sampled: sampled::SampledResources,
 }
 
 impl ResourceTable {
@@ -132,6 +140,7 @@ impl ResourceTable {
             buffers: Slots::default(),
             groups: Slots::default(),
             layouts: HashMap::new(),
+            sampled: sampled::SampledResources::default(),
         }
     }
 
