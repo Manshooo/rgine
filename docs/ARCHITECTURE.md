@@ -45,6 +45,21 @@ The rules below apply to the public surface of `platform`, `render`, `physics`, 
 - **Batched entry points.** Public functions operate on slices, not on single items: `update_transforms(&[Handle], &[Mat4])` rather than one call per object.
 - **No backend type in a caller signature.** If a caller names a type owned by a backend, the abstraction has already leaked.
 
+## Shader variants
+
+Render v1 counts each registered WGSL program and binding mode combination as
+one shader variant. The procedural opaque program has two variants in
+declaration order, classic and draw-uniform bindless. Solid colors and
+checkerboards use the same programs with different draw data. Attachment
+formats and layout signatures belong to pipeline keys.
+
+The renderer's internal `SHADER_VARIANTS` list enumerates the supported keys
+for shader creation and pipeline catalogue validation. Register each supported
+combination explicitly so a new axis only contributes valid combinations. The
+global cap is eight variants and the renderer fails to compile if the list
+exceeds it. CI prints the registered count and keys and checks that the budget
+rejects a fixture one past the cap.
+
 ## Enforced boundaries
 
 These are checked by `cargo xtask check-deps` in CI, not stated as convention:

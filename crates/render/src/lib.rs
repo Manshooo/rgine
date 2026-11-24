@@ -6,6 +6,7 @@ mod drawable;
 pub mod graph;
 pub mod resources;
 pub mod scene;
+mod shaders;
 
 pub use drawable::{DrawOutcome, Drawable, RenderError};
 
