@@ -260,16 +260,8 @@ impl ResourceTable {
         }
 
         let count = bindings.len();
-        let (layout, raw) = checked_gpu(&self.device, || {
-            let layout = self
-                .layouts
-                .get(&count)
-                .cloned()
-                .unwrap_or_else(|| self.make_layout(count));
-            let raw = self.make_group(&layout, bindings, None);
-            (layout, raw)
-        })?;
-        self.layouts.entry(count).or_insert(layout);
+        let layout = self.uniform_layout(count)?.clone();
+        let raw = checked_gpu(&self.device, || self.make_group(&layout, bindings, None))?;
         let key = self.groups.insert(UniformGroup {
             bindings: bindings.to_vec(),
             raw,
@@ -300,6 +292,30 @@ impl ResourceTable {
     /// Returns the alignment required for uniform binding offsets in bytes.
     pub fn uniform_offset_alignment(&self) -> u64 {
         u64::from(self.limits.min_uniform_buffer_offset_alignment)
+    }
+
+    pub(crate) fn uniform_layout(
+        &mut self,
+        entries: usize,
+    ) -> Result<&wgpu::BindGroupLayout, ResourceError> {
+        if !self.layouts.contains_key(&entries) {
+            let layout = checked_gpu(&self.device, || self.make_layout(entries))?;
+            self.layouts.insert(entries, layout);
+        }
+        Ok(&self.layouts[&entries])
+    }
+
+    pub(crate) fn gpu_buffer(&self, handle: BufferHandle) -> Result<&wgpu::Buffer, ResourceError> {
+        Ok(&self.buffer(handle)?.raw)
+    }
+
+    pub(crate) fn gpu_uniform_group(
+        &self,
+        handle: UniformGroupHandle,
+    ) -> Result<&wgpu::BindGroup, ResourceError> {
+        let key = self.check_table(handle.0)?;
+        let group = self.groups.get(key).ok_or(ResourceError::StaleHandle)?;
+        Ok(&group.raw)
     }
 
     fn handle(&self, key: SlotKey) -> Handle {
@@ -437,7 +453,7 @@ fn range_fits(offset: u64, size: u64, capacity: u64) -> bool {
     offset <= capacity && size <= capacity - offset
 }
 
-fn checked_gpu<T>(
+pub(crate) fn checked_gpu<T>(
     device: &wgpu::Device,
     operation: impl FnOnce() -> T,
 ) -> Result<T, ResourceError> {
