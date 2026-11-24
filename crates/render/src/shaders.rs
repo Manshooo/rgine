@@ -5,11 +5,13 @@ const VARIANT_LIMIT: usize = 8;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum ShaderVariantKey {
     Primitive(BindingMode),
+    DirectionalShadow,
 }
 
 pub(crate) const SHADER_VARIANTS: &[ShaderVariantKey] = &[
     ShaderVariantKey::Primitive(BindingMode::Classic),
     ShaderVariantKey::Primitive(BindingMode::Bindless),
+    ShaderVariantKey::DirectionalShadow,
 ];
 
 const _: () = enforce_budget(SHADER_VARIANTS.len());
@@ -19,27 +21,25 @@ const fn enforce_budget(count: usize) {
 }
 
 impl ShaderVariantKey {
-    pub(crate) fn binding_mode(self) -> BindingMode {
-        match self {
-            Self::Primitive(mode) => mode,
-        }
-    }
-
     pub(crate) fn wgsl(self) -> Option<String> {
         if !SHADER_VARIANTS.contains(&self) {
             return None;
         }
-        let (extensions, fragment) = match self {
-            Self::Primitive(BindingMode::Classic) => {
-                ("", include_str!("scene/primitive_classic.wgsl"))
-            }
+        let (extensions, scene, entry) = match self {
+            Self::Primitive(BindingMode::Classic) => (
+                "",
+                include_str!("scene/primitive.wgsl"),
+                include_str!("scene/primitive_classic.wgsl"),
+            ),
             Self::Primitive(BindingMode::Bindless) => (
                 "enable wgpu_binding_array;",
+                include_str!("scene/primitive.wgsl"),
                 include_str!("scene/primitive_bindless.wgsl"),
             ),
+            Self::DirectionalShadow => ("", "", include_str!("scene/shadow.wgsl")),
         };
-        let shared = include_str!("scene/primitive.wgsl");
-        Some(format!("{extensions}\n{shared}\n{fragment}"))
+        let object = include_str!("scene/object.wgsl");
+        Some(format!("{extensions}\n{object}\n{scene}\n{entry}"))
     }
 }
 

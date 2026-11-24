@@ -13,12 +13,16 @@ use crate::resources::{
 };
 use crate::shaders::ShaderVariantKey;
 
+mod shadows;
+
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(240).unwrap();
+const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(304).unwrap();
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 struct ScenePipelineKey {
-    format: wgpu::TextureFormat,
+    color_format: Option<wgpu::TextureFormat>,
     shader: ShaderVariantKey,
     layout: SceneLayoutSignature,
 }
@@ -37,7 +41,7 @@ impl ScenePipelineKey {
             BindingMode::Bindless => (BINDLESS_TEXTURES, BINDLESS_SAMPLERS),
         };
         Self {
-            format,
+            color_format: Some(format),
             shader: ShaderVariantKey::Primitive(binding_mode),
             layout: SceneLayoutSignature {
                 object_uniform_bytes: UNIFORM_SIZE,
@@ -46,13 +50,24 @@ impl ScenePipelineKey {
             },
         }
     }
+
+    const DIRECTIONAL_SHADOW: Self = Self {
+        color_format: None,
+        shader: ShaderVariantKey::DirectionalShadow,
+        layout: SceneLayoutSignature {
+            object_uniform_bytes: UNIFORM_SIZE,
+            sampled_textures: 0,
+            samplers: 0,
+        },
+    };
 }
 
 #[derive(Default)]
 pub(crate) struct SceneRenderer {
     pub(crate) light: DirectionalLight,
     pipeline: Option<(ScenePipelineKey, wgpu::RenderPipeline)>,
-    target: Option<DepthTarget>,
+    shadow_pipeline: Option<wgpu::RenderPipeline>,
+    target: Option<SceneTargets>,
     meshes: HashMap<MeshKey, GpuMesh>,
     materials: [Option<MaterialBinding>; 2],
     uniforms: Option<ObjectUniforms>,
@@ -72,7 +87,7 @@ impl SceneRenderer {
             .as_ref()
             .is_none_or(|target| target.size != size)
         {
-            self.target = Some(DepthTarget::new(table, size)?);
+            self.target = Some(SceneTargets::new(table, size)?);
         }
         let Some(camera) = scene.camera else {
             return Ok(());
@@ -122,17 +137,35 @@ impl SceneRenderer {
                 .flatten()
                 .next()
                 .expect("scene material prepared");
-            self.pipeline = Some((key, create_pipeline(table, key, *material)?));
+            let uniforms = table.uniform_layout(1)?.clone();
+            let sampled = material.layout(table)?;
+            let shadow = &self.target.as_ref().expect("scene targets prepared").shadow;
+            let layouts = [Some(&uniforms), Some(sampled), Some(&shadow.layout)];
+            self.pipeline = Some((key, create_pipeline(&table.device, key, &layouts)?));
+        }
+        if self.shadow_pipeline.is_none() {
+            let uniforms = table.uniform_layout(1)?.clone();
+            self.shadow_pipeline = Some(create_pipeline(
+                &table.device,
+                ScenePipelineKey::DIRECTIONAL_SHADOW,
+                &[Some(&uniforms)],
+            )?);
         }
         if self.uniforms.is_none() {
             self.uniforms = Some(ObjectUniforms::new(table, scene.objects.len())?);
         }
         let meshes = &self.meshes;
         let materials = &self.materials;
+        let frame = SceneUniforms {
+            clip,
+            eye,
+            light: self.light,
+            shadow_clip: shadows::clip_from_world(self.light, &scene.objects, &self.meshes),
+        };
         self.uniforms
             .as_mut()
             .expect("object buffers allocated")
-            .upload(table, clip, eye, self.light, &scene.objects, |object| {
+            .upload(table, frame, &scene.objects, |object| {
                 let mesh = &meshes[&object.mesh];
                 let indices = materials[usize::from(mesh.checkerboard)]
                     .expect("object material prepared")
@@ -149,8 +182,15 @@ impl SceneRenderer {
         output: &wgpu::TextureView,
         clear: wgpu::Color,
     ) -> Result<(), RenderError> {
-        let target = self.target.as_ref().expect("depth attachment prepared");
+        let target = self.target.as_ref().expect("scene targets prepared");
+        let has_draws = scene.camera.is_some() && !scene.objects.is_empty();
         target.graph.execute(|pass| {
+            if *pass.data() == ScenePass::DirectionalShadow {
+                if has_draws {
+                    self.encode_shadows(table, scene, encoder, &target.shadow.view, pass.name())?;
+                }
+                return Ok(());
+            }
             let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(pass.name()),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -163,7 +203,7 @@ impl SceneRenderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &target.view,
+                    view: &target.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
@@ -172,11 +212,12 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
-            if scene.camera.is_some() && !scene.objects.is_empty() {
+            if has_draws {
                 let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
-                let (key, pipeline) = self.pipeline.as_ref().expect("scene pipeline prepared");
+                let (_, pipeline) = self.pipeline.as_ref().expect("scene pipeline prepared");
                 render.set_pipeline(pipeline);
-                if key.shader.binding_mode() == BindingMode::Bindless {
+                render.set_bind_group(2, &target.shadow.group, &[]);
+                if table.binding_mode() == BindingMode::Bindless {
                     render.set_bind_group(1, table.bindless_group()?, &[]);
                 }
                 for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
@@ -187,62 +228,149 @@ impl SceneRenderer {
                     if let MaterialBinding::Classic(group) = material {
                         render.set_bind_group(1, &table.sampled_group(group)?.raw, &[]);
                     }
-                    render.set_vertex_buffer(0, table.gpu_buffer(mesh.vertices)?.slice(..));
-                    render.set_index_buffer(
-                        table.gpu_buffer(mesh.indices)?.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    render.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    mesh.draw(table, &mut render)?;
                 }
             }
             Ok(())
         })
     }
+
+    fn encode_shadows(
+        &self,
+        table: &ResourceTable,
+        scene: &Scene,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        name: &str,
+    ) -> Result<(), RenderError> {
+        let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(name),
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        render.set_pipeline(
+            self.shadow_pipeline
+                .as_ref()
+                .expect("shadow pipeline prepared"),
+        );
+        let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
+        for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
+            render.set_bind_group(0, table.gpu_uniform_group(*group)?, &[]);
+            self.meshes[&object.mesh].draw(table, &mut render)?;
+        }
+        Ok(())
+    }
 }
 
-struct DepthTarget {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScenePass {
+    DirectionalShadow,
+    Opaque,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct DepthAttachment {
     size: [u32; 2],
-    graph: CompiledGraph<(), [u32; 2]>,
-    view: wgpu::TextureView,
+    sampled: bool,
 }
 
-impl DepthTarget {
+struct SceneTargets {
+    size: [u32; 2],
+    graph: CompiledGraph<ScenePass, DepthAttachment>,
+    depth: wgpu::TextureView,
+    shadow: shadows::ShadowTarget,
+}
+
+impl SceneTargets {
     fn new(table: &ResourceTable, size: [u32; 2]) -> Result<Self, RenderError> {
         let mut graph = RenderGraph::with_transient_descriptors();
         let color = graph.import("drawable color");
-        let depth = graph.transient_with_descriptor("scene depth", size);
-        graph.add_pass("opaque scene", &[], &[color, depth], ());
+        let depth = graph.transient_with_descriptor(
+            "scene depth",
+            DepthAttachment {
+                size,
+                sampled: false,
+            },
+        );
+        let shadow = graph.transient_with_descriptor(
+            "directional shadow map",
+            DepthAttachment {
+                size: shadows::MAP_SIZE,
+                sampled: true,
+            },
+        );
+        graph.add_pass(
+            "opaque scene",
+            &[shadow],
+            &[color, depth],
+            ScenePass::Opaque,
+        );
+        graph.add_pass(
+            "directional shadow",
+            &[],
+            &[shadow],
+            ScenePass::DirectionalShadow,
+        );
         graph.export(color);
         let graph = graph
             .compile()
             .map_err(|error| RenderError(error.to_string()))?;
-        let allocations = graph.allocate_transients(|&[width, height]| {
-            checked_gpu(&table.device, || {
-                let texture = table.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("scene depth"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: DEPTH_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                });
-                texture.create_view(&Default::default())
-            })
-        })?;
-        let slot = graph
-            .transient_allocation(depth)
-            .expect("scene depth is retained");
-        let view = allocations
-            .get(slot)
-            .expect("scene depth allocated")
-            .clone();
-        Ok(Self { size, graph, view })
+        let allocations = graph.allocate_transients(
+            |&DepthAttachment {
+                 size: [width, height],
+                 sampled,
+             }| {
+                let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+                if sampled {
+                    usage |= wgpu::TextureUsages::TEXTURE_BINDING;
+                }
+                checked_gpu(&table.device, || {
+                    let texture = table.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some(if sampled {
+                            "directional shadow map"
+                        } else {
+                            "scene depth"
+                        }),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: DEPTH_FORMAT,
+                        usage,
+                        view_formats: &[],
+                    });
+                    texture.create_view(&Default::default())
+                })
+            },
+        )?;
+        let view = |resource| {
+            let slot = graph
+                .transient_allocation(resource)
+                .expect("depth texture retained");
+            allocations
+                .get(slot)
+                .expect("depth texture allocated")
+                .clone()
+        };
+        let depth = view(depth);
+        let shadow = shadows::ShadowTarget::new(&table.device, view(shadow))?;
+        Ok(Self {
+            size,
+            graph,
+            depth,
+            shadow,
+        })
     }
 }
 
@@ -252,14 +380,34 @@ struct GpuMesh {
     index_count: u32,
     checkerboard: bool,
     material: Option<PbrMaterial>,
+    bounds_min: Vec3,
+    bounds_max: Vec3,
 }
 
 impl GpuMesh {
+    fn draw(
+        &self,
+        table: &ResourceTable,
+        render: &mut wgpu::RenderPass<'_>,
+    ) -> Result<(), ResourceError> {
+        render.set_vertex_buffer(0, table.gpu_buffer(self.vertices)?.slice(..));
+        render.set_index_buffer(
+            table.gpu_buffer(self.indices)?.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render.draw_indexed(0..self.index_count, 0, 0..1);
+        Ok(())
+    }
+
     fn upload(table: &mut ResourceTable, mesh: &Mesh) -> Result<Self, RenderError> {
+        let mut bounds_min = Vec3::splat(f32::INFINITY);
+        let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
         let vertex_bytes: Vec<_> = mesh
             .vertices
             .iter()
             .flat_map(|vertex| {
+                bounds_min = bounds_min.min(vertex.position);
+                bounds_max = bounds_max.max(vertex.position);
                 vertex
                     .position
                     .to_array()
@@ -283,6 +431,8 @@ impl GpuMesh {
                 index_count: mesh.indices.len() as u32,
                 checkerboard: mesh.checkerboard,
                 material: mesh.material,
+                bounds_min,
+                bounds_max,
             }),
             Err(error) => {
                 table.release_buffer(vertices)?;
@@ -374,6 +524,13 @@ struct ObjectUniforms {
     groups: Vec<UniformGroupHandle>,
 }
 
+struct SceneUniforms {
+    clip: Mat4,
+    eye: Vec3,
+    light: DirectionalLight,
+    shadow_clip: Mat4,
+}
+
 impl ObjectUniforms {
     fn new(table: &mut ResourceTable, objects: usize) -> Result<Self, RenderError> {
         let alignment = table.uniform_offset_alignment();
@@ -393,9 +550,7 @@ impl ObjectUniforms {
     fn upload(
         &mut self,
         table: &mut ResourceTable,
-        clip: Mat4,
-        eye: Vec3,
-        light: DirectionalLight,
+        frame: SceneUniforms,
         objects: &[SceneObject],
         material: impl Fn(&SceneObject) -> (Option<PbrMaterial>, [u32; 2]),
     ) -> Result<(), RenderError> {
@@ -430,7 +585,7 @@ impl ObjectUniforms {
             } else {
                 Mat4::IDENTITY
             };
-            let transform = clip * object.transform;
+            let transform = frame.clip * object.transform;
             let (surface, [texture, sampler]) = material(object);
             let [metallic, roughness] =
                 surface.map_or([-1.0, 0.0], |surface| [surface.metallic, surface.roughness]);
@@ -441,15 +596,21 @@ impl ObjectUniforms {
                 .chain(object.transform.to_cols_array())
                 .chain(normal.to_cols_array().into_iter().take(12))
                 .chain(object.color)
-                .chain(eye.to_array())
-                .chain([light.intensity])
-                .chain(light.direction_to_light.to_array())
+                .chain(frame.eye.to_array())
+                .chain([frame.light.intensity])
+                .chain(frame.light.direction_to_light.to_array())
                 .chain([metallic, roughness]);
             for (bytes, value) in slot.chunks_exact_mut(4).zip(values) {
                 bytes.copy_from_slice(&value.to_le_bytes());
             }
             slot[228..232].copy_from_slice(&texture.to_le_bytes());
             slot[232..236].copy_from_slice(&sampler.to_le_bytes());
+            for (bytes, value) in slot[240..304]
+                .chunks_exact_mut(4)
+                .zip(frame.shadow_clip.to_cols_array())
+            {
+                bytes.copy_from_slice(&value.to_le_bytes());
+            }
         }
         table.write_buffer(self.buffer, 0, &self.bytes)?;
         Ok(())
@@ -463,29 +624,47 @@ fn scene_uniform_size(stride: u64, objects: usize) -> Result<u64, RenderError> {
 }
 
 fn create_pipeline(
-    table: &mut ResourceTable,
+    device: &wgpu::Device,
     key: ScenePipelineKey,
-    material: MaterialBinding,
+    bind_group_layouts: &[Option<&wgpu::BindGroupLayout>],
 ) -> Result<wgpu::RenderPipeline, RenderError> {
     let source = key
         .shader
         .wgsl()
         .ok_or_else(|| RenderError(format!("shader variant {:?} is not registered", key.shader)))?;
-    let uniforms = table.uniform_layout(1)?.clone();
-    let sampled = material.layout(table)?;
-    let device = &table.device;
+    let (label, attributes, bias) = match key.shader {
+        ShaderVariantKey::Primitive(_) => (
+            "opaque primitives",
+            VERTEX_ATTRIBUTES.as_slice(),
+            wgpu::DepthBiasState::default(),
+        ),
+        ShaderVariantKey::DirectionalShadow => (
+            "directional shadow",
+            &VERTEX_ATTRIBUTES[..1],
+            wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        ),
+    };
+    let targets = [key.color_format.map(|format| wgpu::ColorTargetState {
+        format,
+        blend: None,
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
     Ok(checked_gpu(device, || {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("procedural mesh shader"),
+            label: Some(label),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("procedural mesh pipeline layout"),
-            bind_group_layouts: &[Some(&uniforms), Some(sampled)],
+            label: Some(label),
+            bind_group_layouts,
             immediate_size: 0,
         });
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("opaque primitives"),
+            label: Some(label),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -494,7 +673,7 @@ fn create_pipeline(
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: 32,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
+                    attributes,
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -506,18 +685,14 @@ fn create_pipeline(
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
-                bias: Default::default(),
+                bias,
             }),
             multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
+            fragment: key.color_format.map(|_| wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fragment"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: key.format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &targets,
             }),
             multiview_mask: None,
             cache: None,
