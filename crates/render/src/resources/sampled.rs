@@ -1,8 +1,11 @@
 use super::{Handle, ResourceError, ResourceTable, SlotKey, Slots, checked_gpu, range_fits};
 use std::collections::HashMap;
 
+mod bindless;
 #[cfg(test)]
 mod tests;
+
+pub(super) use bindless::BindlessTable;
 
 /// A sampled texture view owned by one device's resource table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -111,6 +114,25 @@ pub struct TextureDescriptor {
     pub view: TextureViewDescriptor,
 }
 
+impl TextureDescriptor {
+    pub(crate) fn sampled_rgba8(size: [u32; 2]) -> Self {
+        Self {
+            size,
+            mip_levels: 1,
+            array_layers: 1,
+            format: TextureFormat::Rgba8Unorm,
+            view: TextureViewDescriptor {
+                sample_type: TextureSampleType::FilterableFloat,
+                dimension: TextureViewDimension::D2,
+                base_mip_level: 0,
+                mip_level_count: 1,
+                base_array_layer: 0,
+                array_layer_count: 1,
+            },
+        }
+    }
+}
+
 /// Comparison operation for a depth sampler.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompareFunction {
@@ -185,6 +207,14 @@ pub struct SamplerDescriptor {
     pub filter: SamplerFilter,
     /// Addressing behavior along both axes.
     pub address_mode: SamplerAddressMode,
+}
+
+impl SamplerDescriptor {
+    pub(crate) const NEAREST_CLAMP: Self = Self {
+        kind: SamplerKind::Filtering,
+        filter: SamplerFilter::Nearest,
+        address_mode: SamplerAddressMode::ClampToEdge,
+    };
 }
 
 /// The entries in a classic group, in shader binding order.
@@ -313,6 +343,9 @@ impl ResourceTable {
             .get_mut(handle.0.key)
             .expect("validated texture") = texture;
         self.publish_sampled_groups(groups);
+        if let Some(table) = &mut self.bindless {
+            table.texture_changed(handle, false);
+        }
         Ok(())
     }
 
@@ -321,6 +354,9 @@ impl ResourceTable {
         self.texture(handle)?;
         self.remove_sampled_groups(|binding| binding.texture == handle);
         self.sampled.textures.remove(handle.0.key);
+        if let Some(table) = &mut self.bindless {
+            table.texture_changed(handle, true);
+        }
         Ok(())
     }
 
@@ -370,6 +406,9 @@ impl ResourceTable {
             .get_mut(handle.0.key)
             .expect("validated sampler") = sampler;
         self.publish_sampled_groups(groups);
+        if let Some(table) = &mut self.bindless {
+            table.sampler_changed(handle, false);
+        }
         Ok(())
     }
 
@@ -378,6 +417,9 @@ impl ResourceTable {
         self.sampler(handle)?;
         self.remove_sampled_groups(|binding| binding.sampler == handle);
         self.sampled.samplers.remove(handle.0.key);
+        if let Some(table) = &mut self.bindless {
+            table.sampler_changed(handle, true);
+        }
         Ok(())
     }
 

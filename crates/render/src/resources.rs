@@ -1,5 +1,6 @@
 //! Device-scoped GPU resources and classic bind groups.
 
+mod binding;
 mod sampled;
 mod slots;
 
@@ -10,6 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use slots::{SlotKey, Slots};
 
+pub use binding::BindingMode;
+pub(crate) use binding::{BINDLESS_SAMPLERS, BINDLESS_TEXTURES};
 pub use sampled::{
     CompareFunction, SampledBinding, SampledGroupHandle, SamplerAddressMode, SamplerDescriptor,
     SamplerFilter, SamplerHandle, SamplerKind, TextureDescriptor, TextureFormat, TextureHandle,
@@ -118,6 +121,7 @@ pub struct ResourceTable {
     groups: Slots<UniformGroup>,
     layouts: HashMap<usize, wgpu::BindGroupLayout>,
     sampled: sampled::SampledResources,
+    bindless: Option<sampled::BindlessTable>,
 }
 
 impl ResourceTable {
@@ -141,6 +145,16 @@ impl ResourceTable {
             groups: Slots::default(),
             layouts: HashMap::new(),
             sampled: sampled::SampledResources::default(),
+            bindless: None,
+        }
+    }
+
+    /// Returns the sampled-resource binding mode selected for this device.
+    pub fn binding_mode(&self) -> BindingMode {
+        if self.bindless.is_some() {
+            BindingMode::Bindless
+        } else {
+            BindingMode::Classic
         }
     }
 

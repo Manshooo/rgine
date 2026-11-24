@@ -75,6 +75,14 @@ Remove-Item Env:WGPU_BACKEND
 
 Переменная `RUST_LOG=engine_render=info` включает сообщения о неудачных попытках и выбранном GPU-бэкенде в примерах приложения.
 
+На совместимом адаптере движок выбирает bindless и записывает режим в тот же лог. Чтобы сравнить изображение процедурной сцены в режиме classic, запустите пример с `RGINE_FORCE_CLASSIC=1`. На адаптере без нужных возможностей движок автоматически использует classic.
+
+```powershell
+$env:RGINE_FORCE_CLASSIC = '1'
+cargo run --locked -p engine-app --example procedural_scene
+Remove-Item Env:RGINE_FORCE_CLASSIC
+```
+
 ## Лицензия
 
 Двойная лицензия, на выбор пользователя:

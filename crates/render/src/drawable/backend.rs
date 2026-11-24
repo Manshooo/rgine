@@ -2,6 +2,7 @@ use engine_platform::SurfaceSource;
 use wgpu::{Backend, Backends, Instance, InstanceDescriptor};
 
 use super::{RenderError, create_surface};
+use crate::resources::ResourceTable;
 
 // Filtering by the compiled features gives DX12 first on Windows, Metal first
 // on Apple platforms and Vulkan first on Linux and Android.
@@ -11,8 +12,7 @@ pub(super) struct Graphics {
     pub surface: wgpu::Surface<'static>,
     pub instance: Instance,
     pub adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub resources: ResourceTable,
 }
 
 pub(super) fn open(source: &SurfaceSource) -> Result<Graphics, RenderError> {
@@ -41,14 +41,15 @@ fn open_with_backend(source: &SurfaceSource, backend: Backend) -> Result<Graphic
             "adapter offers no usable surface configuration".into(),
         ));
     }
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))
-        .map_err(|error| RenderError(format!("could not open a graphics device: {error}")))?;
+    let resources = ResourceTable::request(
+        &adapter,
+        std::env::var_os("RGINE_FORCE_CLASSIC").is_some_and(|value| value == "1"),
+    )?;
     Ok(Graphics {
         surface,
         instance,
         adapter,
-        device,
-        queue,
+        resources,
     })
 }
 

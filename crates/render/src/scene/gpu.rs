@@ -7,18 +7,52 @@ use super::{Mesh, MeshKey, MeshRegistry, Scene, SceneObject};
 use crate::RenderError;
 use crate::graph::{CompiledGraph, RenderGraph};
 use crate::resources::{
-    BufferDescriptor, BufferHandle, BufferKind, ResourceTable, UniformBinding, UniformGroupHandle,
-    checked_gpu,
+    BINDLESS_SAMPLERS, BINDLESS_TEXTURES, BindingMode, BufferDescriptor, BufferHandle, BufferKind,
+    ResourceError, ResourceTable, SampledBinding, SampledGroupHandle, SamplerDescriptor,
+    TextureDescriptor, UniformBinding, UniformGroupHandle, checked_gpu,
 };
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(144).unwrap();
+const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(160).unwrap();
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+struct ScenePipelineKey {
+    format: wgpu::TextureFormat,
+    binding_mode: BindingMode,
+    layout: SceneLayoutSignature,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+struct SceneLayoutSignature {
+    object_uniform_bytes: NonZeroU64,
+    sampled_textures: u32,
+    samplers: u32,
+}
+
+impl ScenePipelineKey {
+    fn new(format: wgpu::TextureFormat, binding_mode: BindingMode) -> Self {
+        let (sampled_textures, samplers) = match binding_mode {
+            BindingMode::Classic => (1, 1),
+            BindingMode::Bindless => (BINDLESS_TEXTURES, BINDLESS_SAMPLERS),
+        };
+        Self {
+            format,
+            binding_mode,
+            layout: SceneLayoutSignature {
+                object_uniform_bytes: UNIFORM_SIZE,
+                sampled_textures,
+                samplers,
+            },
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct SceneRenderer {
-    pipeline: Option<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
+    pipeline: Option<(ScenePipelineKey, wgpu::RenderPipeline)>,
     target: Option<DepthTarget>,
     meshes: HashMap<MeshKey, GpuMesh>,
+    materials: [Option<MaterialBinding>; 2],
     uniforms: Option<ObjectUniforms>,
 }
 
@@ -31,13 +65,6 @@ impl SceneRenderer {
         size: [u32; 2],
         format: wgpu::TextureFormat,
     ) -> Result<(), RenderError> {
-        if self
-            .pipeline
-            .as_ref()
-            .is_none_or(|(current, _)| *current != format)
-        {
-            self.pipeline = Some((format, create_pipeline(table, format)?));
-        }
         if self
             .target
             .as_ref()
@@ -55,23 +82,54 @@ impl SceneRenderer {
             return Ok(());
         }
         for object in &scene.objects {
-            if let Entry::Vacant(entry) = self.meshes.entry(object.mesh) {
-                let mesh = meshes.get(object.mesh).ok_or_else(|| {
-                    RenderError(format!(
-                        "mesh {:?} is missing from the scene registry",
-                        object.mesh
-                    ))
-                })?;
-                entry.insert(GpuMesh::upload(table, mesh)?);
+            let mesh = match self.meshes.entry(object.mesh) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let mesh = meshes.get(object.mesh).ok_or_else(|| {
+                        RenderError(format!(
+                            "mesh {:?} is missing from the scene registry",
+                            object.mesh
+                        ))
+                    })?;
+                    entry.insert(GpuMesh::upload(table, mesh)?)
+                }
+            };
+            let material = &mut self.materials[usize::from(mesh.checkerboard)];
+            if material.is_none() {
+                *material = Some(MaterialBinding::new(table, mesh.checkerboard)?);
             }
+        }
+        let mode = table.binding_mode();
+        if mode == BindingMode::Bindless {
+            table.prepare_bindless()?;
+        }
+        let key = ScenePipelineKey::new(format, mode);
+        if self
+            .pipeline
+            .as_ref()
+            .is_none_or(|(current, _)| *current != key)
+        {
+            let material = self
+                .materials
+                .iter()
+                .flatten()
+                .next()
+                .expect("scene material prepared");
+            self.pipeline = Some((key, create_pipeline(table, key, *material)?));
         }
         if self.uniforms.is_none() {
             self.uniforms = Some(ObjectUniforms::new(table, scene.objects.len())?);
         }
+        let meshes = &self.meshes;
+        let materials = &self.materials;
         self.uniforms
             .as_mut()
             .expect("object buffers allocated")
-            .upload(table, clip, &scene.objects)
+            .upload(table, clip, &scene.objects, |object| {
+                materials[usize::from(meshes[&object.mesh].checkerboard)]
+                    .expect("object material prepared")
+                    .indices()
+            })
     }
 
     pub(crate) fn encode(
@@ -82,7 +140,6 @@ impl SceneRenderer {
         output: &wgpu::TextureView,
         clear: wgpu::Color,
     ) -> Result<(), RenderError> {
-        let (_, pipeline) = self.pipeline.as_ref().expect("scene pipeline prepared");
         let target = self.target.as_ref().expect("depth attachment prepared");
         target.graph.execute(|pass| {
             let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -108,10 +165,19 @@ impl SceneRenderer {
             });
             if scene.camera.is_some() && !scene.objects.is_empty() {
                 let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
+                let (key, pipeline) = self.pipeline.as_ref().expect("scene pipeline prepared");
                 render.set_pipeline(pipeline);
+                if key.binding_mode == BindingMode::Bindless {
+                    render.set_bind_group(1, table.bindless_group()?, &[]);
+                }
                 for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
                     let mesh = &self.meshes[&object.mesh];
+                    let material = self.materials[usize::from(mesh.checkerboard)]
+                        .expect("object material prepared");
                     render.set_bind_group(0, table.gpu_uniform_group(*group)?, &[]);
+                    if let MaterialBinding::Classic(group) = material {
+                        render.set_bind_group(1, &table.sampled_group(group)?.raw, &[]);
+                    }
                     render.set_vertex_buffer(0, table.gpu_buffer(mesh.vertices)?.slice(..));
                     render.set_index_buffer(
                         table.gpu_buffer(mesh.indices)?.slice(..),
@@ -175,6 +241,7 @@ struct GpuMesh {
     vertices: BufferHandle,
     indices: BufferHandle,
     index_count: u32,
+    checkerboard: bool,
 }
 
 impl GpuMesh {
@@ -188,6 +255,7 @@ impl GpuMesh {
                     .to_array()
                     .into_iter()
                     .chain(vertex.normal.to_array())
+                    .chain(vertex.uv)
             })
             .flat_map(f32::to_le_bytes)
             .collect();
@@ -203,11 +271,71 @@ impl GpuMesh {
                 vertices,
                 indices,
                 index_count: mesh.indices.len() as u32,
+                checkerboard: mesh.checkerboard,
             }),
             Err(error) => {
                 table.release_buffer(vertices)?;
                 Err(error)
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MaterialBinding {
+    Classic(SampledGroupHandle),
+    Bindless([u32; 2]),
+}
+
+impl MaterialBinding {
+    fn new(table: &mut ResourceTable, checkerboard: bool) -> Result<Self, ResourceError> {
+        if table.binding_mode() == BindingMode::Bindless && !checkerboard {
+            return Ok(Self::Bindless([0; 2]));
+        }
+        let (size, texels): (_, &[u8]) = if checkerboard {
+            (
+                [2, 2],
+                &[
+                    255, 255, 255, 255, 72, 72, 72, 255, 72, 72, 72, 255, 255, 255, 255, 255,
+                ],
+            )
+        } else {
+            ([1, 1], &[255; 4])
+        };
+        let texture = table.create_texture(TextureDescriptor::sampled_rgba8(size))?;
+        let sampler = match table.create_sampler(SamplerDescriptor::NEAREST_CLAMP) {
+            Ok(sampler) => sampler,
+            Err(error) => {
+                table.release_texture(texture)?;
+                return Err(error);
+            }
+        };
+        let binding = SampledBinding { texture, sampler };
+        let material =
+            table
+                .write_texture(texture, 0, 0, texels)
+                .and_then(|()| match table.binding_mode() {
+                    BindingMode::Classic => table.create_sampled_group(binding).map(Self::Classic),
+                    BindingMode::Bindless => table.bindless_indices(binding).map(Self::Bindless),
+                });
+        if material.is_err() {
+            table.release_sampler(sampler)?;
+            table.release_texture(texture)?;
+        }
+        material
+    }
+
+    fn indices(self) -> [u32; 2] {
+        match self {
+            Self::Classic(_) => [0; 2],
+            Self::Bindless(indices) => indices,
+        }
+    }
+
+    fn layout(self, table: &ResourceTable) -> Result<&wgpu::BindGroupLayout, ResourceError> {
+        match self {
+            Self::Classic(group) => Ok(&table.sampled_group(group)?.layout),
+            Self::Bindless(_) => table.bindless_layout(),
         }
     }
 }
@@ -256,6 +384,7 @@ impl ObjectUniforms {
         table: &mut ResourceTable,
         clip: Mat4,
         objects: &[SceneObject],
+        indices: impl Fn(&SceneObject) -> [u32; 2],
     ) -> Result<(), RenderError> {
         let size = scene_uniform_size(self.stride, objects.len())?;
         let len = usize::try_from(size)
@@ -297,6 +426,9 @@ impl ObjectUniforms {
             for (bytes, value) in slot.chunks_exact_mut(4).zip(values) {
                 bytes.copy_from_slice(&value.to_le_bytes());
             }
+            let [texture, sampler] = indices(object);
+            slot[144..148].copy_from_slice(&texture.to_le_bytes());
+            slot[148..152].copy_from_slice(&sampler.to_le_bytes());
         }
         table.write_buffer(self.buffer, 0, &self.bytes)?;
         Ok(())
@@ -311,18 +443,33 @@ fn scene_uniform_size(stride: u64, objects: usize) -> Result<u64, RenderError> {
 
 fn create_pipeline(
     table: &mut ResourceTable,
-    format: wgpu::TextureFormat,
+    key: ScenePipelineKey,
+    material: MaterialBinding,
 ) -> Result<wgpu::RenderPipeline, RenderError> {
     let uniforms = table.uniform_layout(1)?.clone();
+    let sampled = material.layout(table)?;
+    let (extensions, fragment) = match key.binding_mode {
+        BindingMode::Classic => ("", include_str!("primitive_classic.wgsl")),
+        BindingMode::Bindless => (
+            "enable wgpu_binding_array;",
+            include_str!("primitive_bindless.wgsl"),
+        ),
+    };
     let device = &table.device;
     Ok(checked_gpu(device, || {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("procedural mesh shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("primitive.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{extensions}\n{}\n{fragment}",
+                    include_str!("primitive.wgsl")
+                )
+                .into(),
+            ),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("procedural mesh pipeline layout"),
-            bind_group_layouts: &[Some(&uniforms)],
+            bind_group_layouts: &[Some(&uniforms), Some(sampled)],
             immediate_size: 0,
         });
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -333,9 +480,9 @@ fn create_pipeline(
                 entry_point: Some("vertex"),
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 24,
+                    array_stride: 32,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -355,7 +502,7 @@ fn create_pipeline(
                 entry_point: Some("fragment"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,
+                    format: key.format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
