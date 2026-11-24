@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The procedural scene example renders ECS cameras and meshes with a depth buffer. Scene extraction follows the fixed schedule, and native surface reattachment rebuilds GPU resources from stable mesh keys.
 - Each drawable owns a resource table for vertex, index and uniform buffers with device-scoped handles and classic uniform bind groups (ADR 0017).
 - The compiled render graph plans physical storage after pass culling. Described transients with equal descriptors reuse one backend allocation when their lifetimes do not overlap (ADR 0016).
 - A compiled render graph validates resource dependencies and runs passes in deterministic order. The clear-window example presents the graph's exported backbuffer (ADR 0015).
