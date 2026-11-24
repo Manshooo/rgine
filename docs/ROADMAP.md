@@ -45,6 +45,8 @@ wgpu device/surface, Render Graph, camera, PBR, shadows, skybox.
 
 Exit: primitive scene at stable 60 FPS on reference desktop, with no first-use pipeline hitch in a scripted camera pass.
 
+The [Render v1 measurement protocol](render-v1-measurement.md) defines the reference run and the iteration budget measured in CI.
+
 ## Phase 3. Assets + Scenes
 GUID, .meta, import cache, glTF, KTX2, RON, migrations, prefabs, hot reload.
 
