@@ -34,6 +34,9 @@ jobs:
         run: cargo bench -p engine-ecs --bench fixed_update --locked
       - name: Check incremental gameplay build budget
         if: matrix.os == 'ubuntu-latest'
+        env:
+          # rust-cache disables incremental compilation for the job by default.
+          CARGO_INCREMENTAL: '1'
         run: python3 .github/scripts/check-incremental-build.py
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
