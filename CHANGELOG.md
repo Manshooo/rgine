@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The compiled render graph plans physical storage after pass culling. Described transients with equal descriptors reuse one backend allocation when their lifetimes do not overlap (ADR 0016).
 - A compiled render graph validates resource dependencies and runs passes in deterministic order. The clear-window example presents the graph's exported backbuffer (ADR 0015).
 - The windowed App loop can present GPU frames on redraw and release its drawable on suspension. Run `cargo run --locked -p engine-app --example clear_window` for the clear-color example (ADR 0014).
 - A wgpu 30.0.2 surface example exercises clear-color presentation, resize and recreation through the platform's native drawable lifecycle (ADR 0014).
