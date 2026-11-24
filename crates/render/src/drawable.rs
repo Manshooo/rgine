@@ -1,3 +1,5 @@
+mod backend;
+
 use std::fmt;
 
 use engine_platform::SurfaceSource;
@@ -48,20 +50,13 @@ impl Drawable {
     /// lifecycle callbacks, since adapter and device creation can block.
     pub fn new(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
         let frame_graph = clear_graph().map_err(|error| RenderError(error.to_string()))?;
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(source.clone())),
-        );
-        let surface = create_surface(&instance, &source)?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .map_err(|error| RenderError(format!("could not select a graphics adapter: {error}")))?;
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .map_err(|error| {
-                    RenderError(format!("could not open a graphics device: {error}"))
-                })?;
+        let backend::Graphics {
+            surface,
+            instance,
+            adapter,
+            device,
+            queue,
+        } = backend::open(&source)?;
         let info = adapter.get_info();
         tracing::info!(adapter = %info.name, backend = ?info.backend, "graphics device ready");
         Ok(Self {
