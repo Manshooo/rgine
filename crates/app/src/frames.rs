@@ -45,6 +45,7 @@ struct SceneFrames {
     snapshot: Scene,
     scratch: Scene,
     light: scene::DirectionalLight,
+    skybox_enabled: bool,
 }
 
 pub(crate) struct Frames {
@@ -71,6 +72,7 @@ impl Frames {
         meshes: MeshRegistry,
         world: &World,
         light: scene::DirectionalLight,
+        skybox_enabled: bool,
     ) -> Self {
         Self {
             scene: Some(SceneFrames {
@@ -78,6 +80,7 @@ impl Frames {
                 snapshot: scene::extract(world),
                 scratch: Scene::default(),
                 light,
+                skybox_enabled,
             }),
             ..Self::new(color)
         }
@@ -145,6 +148,7 @@ impl Frames {
             let mut drawable = Drawable::new(source, self.size).map_err(RenderError::Graphics)?;
             if let Some(scene) = &self.scene {
                 drawable.set_directional_light(scene.light);
+                drawable.set_skybox_enabled(scene.skybox_enabled);
             }
             self.surface = Some(Surface::Ready(Box::new(drawable)));
         }
@@ -215,6 +219,7 @@ mod tests {
             meshes,
             app.simulation.world(),
             scene::DirectionalLight::default(),
+            false,
         );
         let mut runner = Runner::new(app);
         runner.frames = Some(frames);

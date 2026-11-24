@@ -14,6 +14,7 @@ use crate::resources::{
 use crate::shaders::ShaderVariantKey;
 
 mod shadows;
+mod skybox;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(304).unwrap();
@@ -29,7 +30,7 @@ struct ScenePipelineKey {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 struct SceneLayoutSignature {
-    object_uniform_bytes: NonZeroU64,
+    uniform_bytes: NonZeroU64,
     sampled_textures: u32,
     samplers: u32,
 }
@@ -44,7 +45,7 @@ impl ScenePipelineKey {
             color_format: Some(format),
             shader: ShaderVariantKey::Primitive(binding_mode),
             layout: SceneLayoutSignature {
-                object_uniform_bytes: UNIFORM_SIZE,
+                uniform_bytes: UNIFORM_SIZE,
                 sampled_textures,
                 samplers,
             },
@@ -55,16 +56,30 @@ impl ScenePipelineKey {
         color_format: None,
         shader: ShaderVariantKey::DirectionalShadow,
         layout: SceneLayoutSignature {
-            object_uniform_bytes: UNIFORM_SIZE,
+            uniform_bytes: UNIFORM_SIZE,
             sampled_textures: 0,
             samplers: 0,
         },
     };
+
+    fn skybox(format: wgpu::TextureFormat) -> Self {
+        Self {
+            color_format: Some(format),
+            shader: ShaderVariantKey::Skybox,
+            layout: SceneLayoutSignature {
+                uniform_bytes: skybox::UNIFORM_SIZE,
+                sampled_textures: 0,
+                samplers: 0,
+            },
+        }
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct SceneRenderer {
     pub(crate) light: DirectionalLight,
+    pub(crate) skybox_enabled: bool,
+    skybox: Option<skybox::Skybox>,
     pipeline: Option<(ScenePipelineKey, wgpu::RenderPipeline)>,
     shadow_pipeline: Option<wgpu::RenderPipeline>,
     target: Option<SceneTargets>,
@@ -85,9 +100,9 @@ impl SceneRenderer {
         if self
             .target
             .as_ref()
-            .is_none_or(|target| target.size != size)
+            .is_none_or(|target| target.size != size || target.skybox != self.skybox_enabled)
         {
-            self.target = Some(SceneTargets::new(table, size)?);
+            self.target = Some(SceneTargets::new(table, size, self.skybox_enabled)?);
         }
         let Some(camera) = scene.camera else {
             return Ok(());
@@ -95,6 +110,15 @@ impl SceneRenderer {
         let clip = camera
             .clip_from_world(size)
             .ok_or_else(|| RenderError("invalid perspective camera or drawable size".into()))?;
+        if self.skybox_enabled {
+            if self.skybox.is_none() {
+                self.skybox = Some(skybox::Skybox::new(table, format)?);
+            }
+            self.skybox
+                .as_mut()
+                .expect("skybox allocated")
+                .prepare(table, format, camera, size)?;
+        }
         let eye = if camera.view.determinant() != 0.0 {
             camera.view.inverse().w_axis.truncate()
         } else {
@@ -184,12 +208,34 @@ impl SceneRenderer {
     ) -> Result<(), RenderError> {
         let target = self.target.as_ref().expect("scene targets prepared");
         let has_draws = scene.camera.is_some() && !scene.objects.is_empty();
+        let draw_skybox = self.skybox_enabled && scene.camera.is_some();
         target.graph.execute(|pass| {
-            if *pass.data() == ScenePass::DirectionalShadow {
-                if has_draws {
-                    self.encode_shadows(table, scene, encoder, &target.shadow.view, pass.name())?;
+            match pass.data() {
+                ScenePass::DirectionalShadow => {
+                    if has_draws {
+                        self.encode_shadows(
+                            table,
+                            scene,
+                            encoder,
+                            &target.shadow.view,
+                            pass.name(),
+                        )?;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+                ScenePass::Skybox => {
+                    if draw_skybox {
+                        self.skybox.as_ref().expect("skybox prepared").encode(
+                            table,
+                            encoder,
+                            output,
+                            clear,
+                            pass.name(),
+                        )?;
+                    }
+                    return Ok(());
+                }
+                ScenePass::Opaque => {}
             }
             let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(pass.name()),
@@ -198,7 +244,11 @@ impl SceneRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        load: if draw_skybox {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(clear)
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -272,6 +322,7 @@ impl SceneRenderer {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ScenePass {
     DirectionalShadow,
+    Skybox,
     Opaque,
 }
 
@@ -283,13 +334,14 @@ struct DepthAttachment {
 
 struct SceneTargets {
     size: [u32; 2],
+    skybox: bool,
     graph: CompiledGraph<ScenePass, DepthAttachment>,
     depth: wgpu::TextureView,
     shadow: shadows::ShadowTarget,
 }
 
 impl SceneTargets {
-    fn new(table: &ResourceTable, size: [u32; 2]) -> Result<Self, RenderError> {
+    fn new(table: &ResourceTable, size: [u32; 2], skybox: bool) -> Result<Self, RenderError> {
         let mut graph = RenderGraph::with_transient_descriptors();
         let color = graph.import("drawable color");
         let depth = graph.transient_with_descriptor(
@@ -306,9 +358,16 @@ impl SceneTargets {
                 sampled: true,
             },
         );
+        let mut opaque_reads = vec![shadow];
+        if skybox {
+            // The background and the final color share the drawable attachment.
+            let background = graph.import("drawable sky color");
+            graph.add_pass("skybox", &[], &[background], ScenePass::Skybox);
+            opaque_reads.push(background);
+        }
         graph.add_pass(
             "opaque scene",
-            &[shadow],
+            &opaque_reads,
             &[color, depth],
             ScenePass::Opaque,
         );
@@ -367,6 +426,7 @@ impl SceneTargets {
         let shadow = shadows::ShadowTarget::new(&table.device, view(shadow))?;
         Ok(Self {
             size,
+            skybox,
             graph,
             depth,
             shadow,
@@ -632,22 +692,34 @@ fn create_pipeline(
         .shader
         .wgsl()
         .ok_or_else(|| RenderError(format!("shader variant {:?} is not registered", key.shader)))?;
-    let (label, attributes, bias) = match key.shader {
+    let (label, mesh) = match key.shader {
         ShaderVariantKey::Primitive(_) => (
             "opaque primitives",
-            VERTEX_ATTRIBUTES.as_slice(),
-            wgpu::DepthBiasState::default(),
+            Some((
+                VERTEX_ATTRIBUTES.as_slice(),
+                wgpu::DepthBiasState::default(),
+            )),
         ),
         ShaderVariantKey::DirectionalShadow => (
             "directional shadow",
-            &VERTEX_ATTRIBUTES[..1],
-            wgpu::DepthBiasState {
-                constant: 2,
-                slope_scale: 2.0,
-                clamp: 0.0,
-            },
+            Some((
+                &VERTEX_ATTRIBUTES[..1],
+                wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            )),
         ),
+        ShaderVariantKey::Skybox => ("skybox", None),
     };
+    let buffers = mesh.map(|(attributes, _)| {
+        Some(wgpu::VertexBufferLayout {
+            array_stride: 32,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes,
+        })
+    });
     let targets = [key.color_format.map(|format| wgpu::ColorTargetState {
         format,
         blend: None,
@@ -670,17 +742,13 @@ fn create_pipeline(
                 module: &shader,
                 entry_point: Some("vertex"),
                 compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 32,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes,
-                })],
+                buffers: buffers.as_slice(),
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: mesh.map(|_| wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth_stencil: mesh.map(|(_, bias)| wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::Less),

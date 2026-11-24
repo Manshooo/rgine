@@ -140,6 +140,7 @@ fn directional_shadow_darkens_the_receiver_and_follows_the_occluder() {
         let mut table = ResourceTable::request(&adapter, force_classic).unwrap();
         let mut renderer = SceneRenderer {
             light: DirectionalLight::new(Vec3::new(-1.0, 1.0, 0.0), 2.0).unwrap(),
+            skybox_enabled: true,
             ..Default::default()
         };
         scene.objects[1].transform = Mat4::from_translation(Vec3::new(-1.0, 0.75, 0.0));
@@ -163,6 +164,65 @@ fn directional_shadow_darkens_the_receiver_and_follows_the_occluder() {
             table.binding_mode(),
         );
     }
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn skybox_responds_to_rotation_and_remains_behind_opaque_geometry() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let info = adapter.get_info();
+    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut meshes = MeshRegistry::default();
+    let cube = meshes.insert(Mesh::cube());
+    let mut renderer = SceneRenderer {
+        skybox_enabled: true,
+        ..Default::default()
+    };
+    let camera = SceneCamera {
+        view: Mat4::IDENTITY,
+        vertical_fov: 1.0,
+        near: 0.1,
+        far: 20.0,
+    };
+    let mut scene = Scene {
+        camera: Some(camera),
+        objects: Vec::new(),
+    };
+    let initial = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+    let initial_center = pixel(&initial, SIDE / 2, SIDE / 2);
+    assert!(initial_center[2] > 100, "{initial_center:?}");
+
+    scene.camera.as_mut().unwrap().view = Mat4::from_translation(Vec3::new(-4.0, 2.0, -7.0));
+    let translated = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+    assert!(initial == translated, "camera translation changed the sky");
+
+    scene.camera.as_mut().unwrap().view = Mat4::from_rotation_x(0.65);
+    let rotated = center_pixel(&mut renderer, &mut table, &meshes, &scene);
+    assert!(
+        initial_center[0].abs_diff(rotated[0]) > 25,
+        "{initial_center:?}, {rotated:?}"
+    );
+
+    scene.camera = Some(camera);
+    scene.objects.push(SceneObject {
+        mesh: cube,
+        transform: Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)),
+        color: [0.0, 1.0, 0.0, 1.0],
+    });
+    let composed = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+    let foreground = pixel(&composed, SIDE / 2, SIDE / 2);
+    assert!(foreground[1] > 64 && foreground[2] == 0, "{foreground:?}");
+    assert_eq!(pixel(&composed, 4, 4), pixel(&initial, 4, 4));
+
+    scene.camera = None;
+    let no_camera = center_pixel(&mut renderer, &mut table, &meshes, &scene);
+    assert_eq!(no_camera, [0, 0, 0, 255]);
+    eprintln!(
+        "{} ({:?}): sky {initial_center:?} before rotation and {rotated:?} after rotation, opaque foreground {foreground:?}",
+        info.name, info.backend,
+    );
 }
 
 #[test]

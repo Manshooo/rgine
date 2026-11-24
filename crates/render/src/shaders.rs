@@ -6,12 +6,14 @@ const VARIANT_LIMIT: usize = 8;
 pub(crate) enum ShaderVariantKey {
     Primitive(BindingMode),
     DirectionalShadow,
+    Skybox,
 }
 
 pub(crate) const SHADER_VARIANTS: &[ShaderVariantKey] = &[
     ShaderVariantKey::Primitive(BindingMode::Classic),
     ShaderVariantKey::Primitive(BindingMode::Bindless),
     ShaderVariantKey::DirectionalShadow,
+    ShaderVariantKey::Skybox,
 ];
 
 const _: () = enforce_budget(SHADER_VARIANTS.len());
@@ -37,6 +39,7 @@ impl ShaderVariantKey {
                 include_str!("scene/primitive_bindless.wgsl"),
             ),
             Self::DirectionalShadow => ("", "", include_str!("scene/shadow.wgsl")),
+            Self::Skybox => return Some(include_str!("scene/skybox.wgsl").into()),
         };
         let object = include_str!("scene/object.wgsl");
         Some(format!("{extensions}\n{object}\n{scene}\n{entry}"))
