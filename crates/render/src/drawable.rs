@@ -94,6 +94,11 @@ impl Drawable {
         self.scene.light = light;
     }
 
+    /// Draws the procedural sky behind opaque geometry when a scene has a camera.
+    pub fn set_skybox_enabled(&mut self, enabled: bool) {
+        self.scene.skybox_enabled = enabled;
+    }
+
     /// Records the current size in physical pixels for the next redraw.
     pub fn resize(&mut self, size: [u32; 2]) {
         if self.size != size {

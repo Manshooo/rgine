@@ -23,7 +23,8 @@ fn main() -> Result<(), RenderError> {
     );
     let mut app = App::new()
         .with_window(WindowDesc::new("rgine - procedural scene").with_size(960, 640))
-        .with_directional_light(DirectionalLight::new(Vec3::new(-0.35, 0.75, 1.0), 3.2).unwrap());
+        .with_skybox()
+        .with_directional_light(DirectionalLight::new(Vec3::new(-1.0, 0.85, -0.25), 3.2).unwrap());
     let mut orbit = Orbit {
         yaw: 0.28,
         height: 0.48,

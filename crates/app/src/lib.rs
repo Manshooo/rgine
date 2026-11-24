@@ -37,6 +37,7 @@ pub struct App {
     update: StageId,
     window: WindowDesc,
     directional_light: scene::DirectionalLight,
+    skybox_enabled: bool,
 }
 
 impl Default for App {
@@ -48,6 +49,7 @@ impl Default for App {
             update,
             window: WindowDesc::new("rgine - bootstrap"),
             directional_light: scene::DirectionalLight::default(),
+            skybox_enabled: false,
         }
     }
 }
@@ -110,6 +112,12 @@ impl App {
         self
     }
 
+    /// Adds the procedural sky behind opaque geometry in the windowed scene.
+    pub fn with_skybox(mut self) -> Self {
+        self.skybox_enabled = true;
+        self
+    }
+
     /// Runs the application until its window is closed.
     pub fn run(self) -> Result<(), PlatformError> {
         engine_platform::run(&mut Runner::new(self))
@@ -132,6 +140,7 @@ impl App {
             meshes,
             self.simulation.world(),
             self.directional_light,
+            self.skybox_enabled,
         );
         self.run_with_frames(frames)
     }

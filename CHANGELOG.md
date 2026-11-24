@@ -8,6 +8,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 
 ### Added
 - The procedural scene renders directional cast shadows on metallic-roughness surfaces in both resource binding modes.
+- The procedural scene draws a generated skybox that follows camera rotation and stays behind opaque geometry.
 - Procedural meshes support metallic-roughness surfaces lit by a configurable directional light. The scene example compares smooth and rough dielectric and metal spheres using both resource binding modes.
 - The renderer selects classic or draw-uniform bindless sampled bindings at device startup. The procedural scene renders a checkerboard through both layouts, with a classic override for comparisons (ADR 0017).
 - Render resource tables own sampled texture views and samplers. Classic bind groups keep their handles across compatible replacements and remain valid during texture uploads (ADR 0017).
