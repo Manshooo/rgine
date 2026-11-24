@@ -1,9 +1,9 @@
 use std::collections::{HashMap, hash_map::Entry};
 use std::num::NonZeroU64;
 
-use engine_core::glam::Mat4;
+use engine_core::glam::{Mat4, Vec3};
 
-use super::{Mesh, MeshKey, MeshRegistry, Scene, SceneObject};
+use super::{DirectionalLight, Mesh, MeshKey, MeshRegistry, PbrMaterial, Scene, SceneObject};
 use crate::RenderError;
 use crate::graph::{CompiledGraph, RenderGraph};
 use crate::resources::{
@@ -14,7 +14,7 @@ use crate::resources::{
 use crate::shaders::ShaderVariantKey;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(160).unwrap();
+const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(240).unwrap();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 struct ScenePipelineKey {
@@ -50,6 +50,7 @@ impl ScenePipelineKey {
 
 #[derive(Default)]
 pub(crate) struct SceneRenderer {
+    pub(crate) light: DirectionalLight,
     pipeline: Option<(ScenePipelineKey, wgpu::RenderPipeline)>,
     target: Option<DepthTarget>,
     meshes: HashMap<MeshKey, GpuMesh>,
@@ -79,6 +80,11 @@ impl SceneRenderer {
         let clip = camera
             .clip_from_world(size)
             .ok_or_else(|| RenderError("invalid perspective camera or drawable size".into()))?;
+        let eye = if camera.view.determinant() != 0.0 {
+            camera.view.inverse().w_axis.truncate()
+        } else {
+            Vec3::ZERO
+        };
         if scene.objects.is_empty() {
             return Ok(());
         }
@@ -126,10 +132,12 @@ impl SceneRenderer {
         self.uniforms
             .as_mut()
             .expect("object buffers allocated")
-            .upload(table, clip, &scene.objects, |object| {
-                materials[usize::from(meshes[&object.mesh].checkerboard)]
+            .upload(table, clip, eye, self.light, &scene.objects, |object| {
+                let mesh = &meshes[&object.mesh];
+                let indices = materials[usize::from(mesh.checkerboard)]
                     .expect("object material prepared")
-                    .indices()
+                    .indices();
+                (mesh.material, indices)
             })
     }
 
@@ -243,6 +251,7 @@ struct GpuMesh {
     indices: BufferHandle,
     index_count: u32,
     checkerboard: bool,
+    material: Option<PbrMaterial>,
 }
 
 impl GpuMesh {
@@ -273,6 +282,7 @@ impl GpuMesh {
                 indices,
                 index_count: mesh.indices.len() as u32,
                 checkerboard: mesh.checkerboard,
+                material: mesh.material,
             }),
             Err(error) => {
                 table.release_buffer(vertices)?;
@@ -384,8 +394,10 @@ impl ObjectUniforms {
         &mut self,
         table: &mut ResourceTable,
         clip: Mat4,
+        eye: Vec3,
+        light: DirectionalLight,
         objects: &[SceneObject],
-        indices: impl Fn(&SceneObject) -> [u32; 2],
+        material: impl Fn(&SceneObject) -> (Option<PbrMaterial>, [u32; 2]),
     ) -> Result<(), RenderError> {
         let size = scene_uniform_size(self.stride, objects.len())?;
         let len = usize::try_from(size)
@@ -419,17 +431,25 @@ impl ObjectUniforms {
                 Mat4::IDENTITY
             };
             let transform = clip * object.transform;
+            let (surface, [texture, sampler]) = material(object);
+            let [metallic, roughness] =
+                surface.map_or([-1.0, 0.0], |surface| [surface.metallic, surface.roughness]);
+            // WGSL packs each mat3 column into a 16-byte slot.
             let values = transform
                 .to_cols_array()
                 .into_iter()
-                .chain(normal.to_cols_array())
-                .chain(object.color);
+                .chain(object.transform.to_cols_array())
+                .chain(normal.to_cols_array().into_iter().take(12))
+                .chain(object.color)
+                .chain(eye.to_array())
+                .chain([light.intensity])
+                .chain(light.direction_to_light.to_array())
+                .chain([metallic, roughness]);
             for (bytes, value) in slot.chunks_exact_mut(4).zip(values) {
                 bytes.copy_from_slice(&value.to_le_bytes());
             }
-            let [texture, sampler] = indices(object);
-            slot[144..148].copy_from_slice(&texture.to_le_bytes());
-            slot[148..152].copy_from_slice(&sampler.to_le_bytes());
+            slot[228..232].copy_from_slice(&texture.to_le_bytes());
+            slot[232..236].copy_from_slice(&sampler.to_le_bytes());
         }
         table.write_buffer(self.buffer, 0, &self.bytes)?;
         Ok(())

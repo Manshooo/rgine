@@ -7,7 +7,7 @@ use wgpu::CurrentSurfaceTexture;
 
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
 use crate::resources::{ResourceError, ResourceTable};
-use crate::scene::{MeshRegistry, Scene, SceneRenderer};
+use crate::scene::{DirectionalLight, MeshRegistry, Scene, SceneRenderer};
 
 /// A GPU or surface failure reported without exposing backend types.
 #[derive(Debug)]
@@ -87,6 +87,11 @@ impl Drawable {
     /// Accesses this device's resource table before preparing the next frame.
     pub fn resources(&mut self) -> &mut ResourceTable {
         &mut self.resources
+    }
+
+    /// Sets the direct light for subsequent scene draws.
+    pub fn set_directional_light(&mut self, light: DirectionalLight) {
+        self.scene.light = light;
     }
 
     /// Records the current size in physical pixels for the next redraw.

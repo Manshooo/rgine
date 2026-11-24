@@ -1,9 +1,12 @@
 //! Run the first 3D scene with `cargo run --locked -p engine-app --example procedural_scene`.
+//! Spheres from left to right: smooth dielectric, rough dielectric, smooth metal, rough metal.
 
 use engine_app::core::glam::{Mat4, Vec3};
 use engine_app::ecs::{Component, World};
 use engine_app::platform::{Input, KeyCode, PhysicalKey, WindowDesc};
-use engine_app::scene::{Camera, Mesh, MeshRegistry, Renderable, Transform};
+use engine_app::scene::{
+    Camera, DirectionalLight, Mesh, MeshRegistry, PbrMaterial, Renderable, Transform,
+};
 use engine_app::{App, RenderError};
 
 #[derive(Component)]
@@ -13,9 +16,14 @@ fn main() -> Result<(), RenderError> {
     engine_app::core::init_logging();
     let mut meshes = MeshRegistry::default();
     let cube = meshes.insert(Mesh::cube());
-    let plane = meshes.insert(Mesh::plane().with_checkerboard());
-    let mut app =
-        App::new().with_window(WindowDesc::new("rgine - procedural scene").with_size(960, 640));
+    let plane = meshes.insert(
+        Mesh::plane()
+            .with_checkerboard()
+            .with_pbr_material(PbrMaterial::new(0.0, 0.82)),
+    );
+    let mut app = App::new()
+        .with_window(WindowDesc::new("rgine - procedural scene").with_size(960, 640))
+        .with_directional_light(DirectionalLight::new(Vec3::new(-0.35, 0.75, 1.0), 3.2).unwrap());
     let mut orbit = Orbit {
         yaw: 0.28,
         height: 0.48,
@@ -26,47 +34,35 @@ fn main() -> Result<(), RenderError> {
     world.insert(camera, Camera::default()).unwrap();
     world.insert(camera, orbit.transform()).unwrap();
 
-    let foreground = world.spawn_empty();
-    world
-        .insert(
-            foreground,
-            Transform {
-                translation: Vec3::new(0.65, 0.62, 0.8),
-                scale: Vec3::splat(1.24),
-                ..Transform::default()
-            },
-        )
-        .unwrap();
-    world
-        .insert(
-            foreground,
-            Renderable {
-                mesh: cube,
-                color: [0.92, 0.25, 0.08, 1.0],
-            },
-        )
-        .unwrap();
-
-    let background = world.spawn_empty();
-    world
-        .insert(
-            background,
-            Transform {
-                translation: Vec3::new(-0.45, 0.9, -0.8),
-                scale: Vec3::new(1.55, 1.8, 1.4),
-                ..Transform::default()
-            },
-        )
-        .unwrap();
-    world
-        .insert(
-            background,
-            Renderable {
-                mesh: cube,
-                color: [0.06, 0.56, 0.68, 1.0],
-            },
-        )
-        .unwrap();
+    for (x, metallic, roughness) in [
+        (-2.04, 0.0, 0.22),
+        (-0.68, 0.0, 0.70),
+        (0.68, 1.0, 0.22),
+        (2.04, 1.0, 0.70),
+    ] {
+        let mesh =
+            meshes.insert(Mesh::sphere().with_pbr_material(PbrMaterial::new(metallic, roughness)));
+        let sphere = world.spawn_empty();
+        world
+            .insert(
+                sphere,
+                Transform {
+                    translation: Vec3::new(x, 0.60, 0.0),
+                    scale: Vec3::splat(1.20),
+                    ..Transform::default()
+                },
+            )
+            .unwrap();
+        world
+            .insert(
+                sphere,
+                Renderable {
+                    mesh,
+                    color: [0.72, 0.39, 0.12, 1.0],
+                },
+            )
+            .unwrap();
+    }
 
     let floor = world.spawn_empty();
     world

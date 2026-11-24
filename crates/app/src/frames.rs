@@ -44,6 +44,7 @@ struct SceneFrames {
     meshes: MeshRegistry,
     snapshot: Scene,
     scratch: Scene,
+    light: scene::DirectionalLight,
 }
 
 pub(crate) struct Frames {
@@ -65,12 +66,18 @@ impl Frames {
         }
     }
 
-    pub(crate) fn with_scene(color: [f64; 4], meshes: MeshRegistry, world: &World) -> Self {
+    pub(crate) fn with_scene(
+        color: [f64; 4],
+        meshes: MeshRegistry,
+        world: &World,
+        light: scene::DirectionalLight,
+    ) -> Self {
         Self {
             scene: Some(SceneFrames {
                 meshes,
                 snapshot: scene::extract(world),
                 scratch: Scene::default(),
+                light,
             }),
             ..Self::new(color)
         }
@@ -135,7 +142,10 @@ impl Frames {
             .surface
             .take_if(|surface| matches!(surface, Surface::Pending(_)))
         {
-            let drawable = Drawable::new(source, self.size).map_err(RenderError::Graphics)?;
+            let mut drawable = Drawable::new(source, self.size).map_err(RenderError::Graphics)?;
+            if let Some(scene) = &self.scene {
+                drawable.set_directional_light(scene.light);
+            }
             self.surface = Some(Surface::Ready(Box::new(drawable)));
         }
         if let Some(Surface::Ready(drawable)) = &mut self.surface {
@@ -200,7 +210,12 @@ mod tests {
             3 => commands.despawn(original),
             _ => {}
         });
-        let frames = Frames::with_scene([0.0; 4], meshes, app.simulation.world());
+        let frames = Frames::with_scene(
+            [0.0; 4],
+            meshes,
+            app.simulation.world(),
+            scene::DirectionalLight::default(),
+        );
         let mut runner = Runner::new(app);
         runner.frames = Some(frames);
         let mut commands = Commands::default();
