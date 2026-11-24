@@ -4,11 +4,12 @@ use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
-use crate::resources::ResourceTable;
+use crate::resources::{ResourceError, ResourceTable};
+use crate::scene::{MeshRegistry, Scene, SceneRenderer};
 
 /// A GPU or surface failure reported without exposing backend types.
 #[derive(Debug)]
-pub struct RenderError(String);
+pub struct RenderError(pub(crate) String);
 
 impl fmt::Display for RenderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -17,6 +18,12 @@ impl fmt::Display for RenderError {
 }
 
 impl std::error::Error for RenderError {}
+
+impl From<ResourceError> for RenderError {
+    fn from(error: ResourceError) -> Self {
+        Self(error.to_string())
+    }
+}
 
 /// The result of trying to present a frame.
 #[derive(Debug, PartialEq, Eq)]
@@ -39,6 +46,7 @@ pub struct Drawable {
     adapter: wgpu::Adapter,
     resources: ResourceTable,
     frame_graph: CompiledGraph<()>,
+    scene: SceneRenderer,
     size: [u32; 2],
     needs_configure: bool,
 }
@@ -71,6 +79,7 @@ impl Drawable {
             adapter,
             resources: ResourceTable::new(device, queue),
             frame_graph,
+            scene: SceneRenderer::default(),
             size,
             needs_configure: true,
         })
@@ -113,7 +122,25 @@ impl Drawable {
     }
 
     /// Clears the drawable to the given linear RGBA color and presents it.
-    pub fn draw(&mut self, [r, g, b, a]: [f64; 4]) -> Result<DrawOutcome, RenderError> {
+    pub fn draw(&mut self, clear: [f64; 4]) -> Result<DrawOutcome, RenderError> {
+        self.present(clear, None)
+    }
+
+    /// Draws the extracted scene with the current device and drawable size.
+    pub fn draw_scene(
+        &mut self,
+        clear: [f64; 4],
+        meshes: &MeshRegistry,
+        scene: &Scene,
+    ) -> Result<DrawOutcome, RenderError> {
+        self.present(clear, Some((meshes, scene)))
+    }
+
+    fn present(
+        &mut self,
+        [r, g, b, a]: [f64; 4],
+        scene: Option<(&MeshRegistry, &Scene)>,
+    ) -> Result<DrawOutcome, RenderError> {
         if self.size.contains(&0) {
             return Ok(DrawOutcome::Idle);
         }
@@ -151,7 +178,21 @@ impl Drawable {
             .resources
             .device
             .create_command_encoder(&Default::default());
-        self.encode_frame(&mut encoder, &view, wgpu::Color { r, g, b, a })?;
+        let color = wgpu::Color { r, g, b, a };
+        if let Some((meshes, scene)) = scene {
+            let size = [frame.texture.width(), frame.texture.height()];
+            self.scene.prepare(
+                &mut self.resources,
+                meshes,
+                scene,
+                size,
+                frame.texture.format(),
+            )?;
+            self.scene
+                .encode(&self.resources, scene, &mut encoder, &view, color)?;
+        } else {
+            self.encode_frame(&mut encoder, &view, color)?;
+        }
         self.resources.queue.submit([encoder.finish()]);
         self.source.pre_present_notify();
         self.resources.queue.present(frame);

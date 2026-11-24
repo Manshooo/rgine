@@ -15,7 +15,10 @@ pub use simulation::{FixedStep, Resources, Simulation, StepContext};
 
 mod frames;
 mod replay;
+pub mod scene;
 mod simulation;
+
+use std::time::Duration;
 
 use engine_ecs::{Schedule, StageId, Tick, World};
 use engine_platform::{
@@ -106,8 +109,23 @@ impl App {
 
     /// Runs the windowed app and presents a linear RGBA clear color on redraw.
     pub fn run_rendered(self, clear_color: [f64; 4]) -> Result<(), RenderError> {
+        self.run_with_frames(Frames::new(clear_color))
+    }
+
+    /// Renders scene components extracted from the world after each fixed update.
+    /// The mesh registry supplies stable geometry across native surface changes.
+    pub fn run_scene(
+        self,
+        meshes: scene::MeshRegistry,
+        clear_color: [f64; 4],
+    ) -> Result<(), RenderError> {
+        let frames = Frames::with_scene(clear_color, meshes, self.simulation.world());
+        self.run_with_frames(frames)
+    }
+
+    fn run_with_frames(self, frames: Frames) -> Result<(), RenderError> {
         let mut runner = Runner::new(self);
-        runner.frames = Some(Frames::new(clear_color));
+        runner.frames = Some(frames);
         engine_platform::run(&mut runner).map_err(RenderError::Platform)?;
         runner.render_failure.map_or(Ok(()), Err)
     }
@@ -186,16 +204,25 @@ impl Runner {
             }
         }
         if active {
-            self.simulation.advance(elapsed);
-            if redraw {
-                let frames = self.frames.as_mut().expect("only rendered windows redraw");
-                if let Err(error) = frames.draw(&self.open, commands) {
-                    if self.render_failure.is_none() {
-                        self.render_failure = Some(error);
-                    }
-                    commands.exit();
+            self.advance_frame(elapsed, redraw, commands);
+        }
+    }
+
+    fn advance_frame(&mut self, elapsed: Duration, redraw: bool, commands: &mut Commands) {
+        let steps = self.simulation.advance(elapsed);
+        let Some(frames) = &mut self.frames else {
+            return;
+        };
+        let changed = steps > 0 && frames.extract_for_redraw(self.simulation.world());
+        if redraw {
+            if let Err(error) = frames.draw(&self.open, commands) {
+                if self.render_failure.is_none() {
+                    self.render_failure = Some(error);
                 }
+                commands.exit();
             }
+        } else if changed {
+            commands.request_redraw(&self.open);
         }
     }
 }
