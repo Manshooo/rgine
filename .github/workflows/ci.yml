@@ -29,6 +29,9 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --locked
       - run: cargo test --workspace --locked
+      - name: Report shader variants and check the budget
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p engine-render --locked --lib shaders::tests::reports_shader_variants -- --exact --nocapture
       - name: Measure fixed ECS updates
         if: matrix.os == 'ubuntu-latest'
         run: cargo bench -p engine-ecs --bench fixed_update --locked

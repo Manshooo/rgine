@@ -11,6 +11,7 @@ use crate::resources::{
     ResourceError, ResourceTable, SampledBinding, SampledGroupHandle, SamplerDescriptor,
     TextureDescriptor, UniformBinding, UniformGroupHandle, checked_gpu,
 };
+use crate::shaders::ShaderVariantKey;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(160).unwrap();
@@ -18,7 +19,7 @@ const UNIFORM_SIZE: NonZeroU64 = NonZeroU64::new(160).unwrap();
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 struct ScenePipelineKey {
     format: wgpu::TextureFormat,
-    binding_mode: BindingMode,
+    shader: ShaderVariantKey,
     layout: SceneLayoutSignature,
 }
 
@@ -37,7 +38,7 @@ impl ScenePipelineKey {
         };
         Self {
             format,
-            binding_mode,
+            shader: ShaderVariantKey::Primitive(binding_mode),
             layout: SceneLayoutSignature {
                 object_uniform_bytes: UNIFORM_SIZE,
                 sampled_textures,
@@ -167,7 +168,7 @@ impl SceneRenderer {
                 let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
                 let (key, pipeline) = self.pipeline.as_ref().expect("scene pipeline prepared");
                 render.set_pipeline(pipeline);
-                if key.binding_mode == BindingMode::Bindless {
+                if key.shader.binding_mode() == BindingMode::Bindless {
                     render.set_bind_group(1, table.bindless_group()?, &[]);
                 }
                 for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
@@ -446,26 +447,17 @@ fn create_pipeline(
     key: ScenePipelineKey,
     material: MaterialBinding,
 ) -> Result<wgpu::RenderPipeline, RenderError> {
+    let source = key
+        .shader
+        .wgsl()
+        .ok_or_else(|| RenderError(format!("shader variant {:?} is not registered", key.shader)))?;
     let uniforms = table.uniform_layout(1)?.clone();
     let sampled = material.layout(table)?;
-    let (extensions, fragment) = match key.binding_mode {
-        BindingMode::Classic => ("", include_str!("primitive_classic.wgsl")),
-        BindingMode::Bindless => (
-            "enable wgpu_binding_array;",
-            include_str!("primitive_bindless.wgsl"),
-        ),
-    };
     let device = &table.device;
     Ok(checked_gpu(device, || {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("procedural mesh shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{extensions}\n{}\n{fragment}",
-                    include_str!("primitive.wgsl")
-                )
-                .into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("procedural mesh pipeline layout"),

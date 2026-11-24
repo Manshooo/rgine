@@ -15,6 +15,9 @@ fn scene_pipeline_keys_include_binding_mode_and_layout() {
     let classic = ScenePipelineKey::new(format, BindingMode::Classic);
     let bindless = ScenePipelineKey::new(format, BindingMode::Bindless);
     assert_ne!(classic, bindless);
+    assert_ne!(classic.shader, bindless.shader);
+    assert!(classic.shader.wgsl().is_some());
+    assert!(bindless.shader.wgsl().is_some());
     assert_ne!(classic.layout, bindless.layout);
     assert_eq!(
         (bindless.layout.sampled_textures, bindless.layout.samplers),
