@@ -8,6 +8,8 @@ repository.workspace = true
 
 [lib]
 proc-macro = true
+# engine-ecs integration tests exercise the derives without a standalone proc-macro harness.
+test = false
 
 [dependencies]
 proc-macro2.workspace = true
