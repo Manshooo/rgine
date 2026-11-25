@@ -163,8 +163,8 @@ fn classic_and_bindless_draw_the_same_materials() {
     };
     let mut bindless_renderer = SceneRenderer::default();
     let bindless_image = scene_pixels(&mut bindless_renderer, &mut automatic, &meshes, &scene);
-    assert_eq!(bindless_renderer.materials[0].unwrap().indices(), [0, 0]);
-    assert_eq!(bindless_renderer.materials[1].unwrap().indices(), [1, 1]);
+    assert_eq!(bindless_renderer.meshes[&solid].binding.indices(), [0, 0]);
+    assert_eq!(bindless_renderer.meshes[&checker].binding.indices(), [1, 1]);
     let mut classic_renderer = SceneRenderer::default();
     let classic_image = scene_pixels(&mut classic_renderer, &mut classic, &meshes, &scene);
     let solid = pixel(&classic_image, 17, 28);
@@ -521,6 +521,93 @@ fn imported_marker_renders_at_composed_node_transform() {
         center,
         center_pixel(&mut renderer, &mut table, &registry, &scene)
     );
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn imported_ktx2_material_samples_mips_and_color_space() {
+    use engine_asset::{ImportCache, gltf_prop, ktx2::Texture};
+    use std::{fs, path::Path};
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../asset/tests/fixtures");
+    let dir = tempfile::tempdir().unwrap();
+    let file = gltf_prop::import(
+        &fixtures.join("textured-quad.gltf"),
+        &ImportCache::new(dir.path()),
+        &Default::default(),
+    )
+    .unwrap();
+    let prop = gltf_prop::Prop::load(&file).unwrap();
+    let srgb_path = fixtures.join("mip-colors.ktx2");
+    let linear_path = dir.path().join("linear.ktx2");
+    let mut linear = fs::read(&srgb_path).unwrap();
+    linear[12..16].copy_from_slice(&37u32.to_le_bytes());
+    let dfd = u32::from_le_bytes(linear[48..52].try_into().unwrap()) as usize;
+    linear[dfd + 14] = 1;
+    linear[dfd + 79] = 0x0f;
+    fs::write(&linear_path, linear).unwrap();
+
+    let mut registry = MeshRegistry::default();
+    let srgb = registry
+        .register_textured_prop(&prop, Texture::load(&srgb_path).unwrap())
+        .unwrap();
+    let linear = registry
+        .register_textured_prop(&prop, Texture::load(&linear_path).unwrap())
+        .unwrap();
+    let mut minified = srgb.clone();
+    minified[0].transform *= Mat4::from_scale(Vec3::splat(0.08));
+    let mut scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: Vec::new(),
+    };
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let mut classic = None;
+    for force_classic in [true, false] {
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let mut table = ResourceTable::request(&adapter, force_classic).unwrap();
+        if !force_classic && table.binding_mode() == BindingMode::Classic {
+            break;
+        }
+        let mut renderer = SceneRenderer {
+            light: DirectionalLight::new(Vec3::Z, 0.0).unwrap(),
+            hemisphere_light: HemisphereLight::new(Vec3::ONE, Vec3::ONE).unwrap(),
+            ..Default::default()
+        };
+        let mut sample = |objects: &[SceneObject]| {
+            scene.objects = objects.to_vec();
+            center_pixel(&mut renderer, &mut table, &registry, &scene)
+        };
+        let pixels = [sample(&srgb), sample(&minified), sample(&linear)];
+        let mode = table.binding_mode();
+        eprintln!("{mode:?}: sRGB base, sRGB minified, linear base: {pixels:?}");
+        for (actual, expected) in
+            pixels
+                .into_iter()
+                .zip([[55u8, 0, 0, 255], [0, 55, 0, 255], [128, 0, 0, 255]])
+        {
+            assert!(
+                actual
+                    .into_iter()
+                    .zip(expected)
+                    .all(|(a, b)| a.abs_diff(b) <= 1)
+            );
+        }
+        if let Some(previous) = classic.replace(pixels) {
+            for (actual, expected) in pixels
+                .into_iter()
+                .flatten()
+                .zip(previous.into_iter().flatten())
+            {
+                assert!(actual.abs_diff(expected) <= 1);
+            }
+        }
+    }
 }
 
 fn center_pixel(
