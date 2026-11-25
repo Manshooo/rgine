@@ -1,12 +1,13 @@
 mod backend;
 
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
-use crate::resources::{ResourceError, ResourceTable};
+use crate::resources::{BindingMode, ResourceError, ResourceTable};
 use crate::scene::{
     DirectionalLight, HemisphereLight, MeshRegistry, SCENE_COLOR_FORMATS, Scene, SceneRenderer,
 };
@@ -40,6 +41,19 @@ pub enum DrawOutcome {
     Idle,
 }
 
+/// The GPU and pipeline configuration validated for the Render v1 benchmark.
+#[derive(Debug)]
+pub struct BenchmarkGraphics {
+    /// Name of the selected adapter.
+    pub adapter: String,
+    /// Driver version or backend-specific driver information.
+    pub driver: String,
+    /// Configured SDR surface format.
+    pub format: String,
+    /// Full keys of the scene pipelines prepared on this device.
+    pub pipelines: Vec<String>,
+}
+
 /// The GPU state for one live window surface.
 ///
 /// Drop this when the platform invalidates its source.
@@ -53,12 +67,23 @@ pub struct Drawable {
     scene: SceneRenderer,
     size: [u32; 2],
     surface_format: Option<wgpu::TextureFormat>,
+    immediate: bool,
+    last_present: Option<Instant>,
 }
 
 impl Drawable {
     /// Initializes the GPU backend for a live surface. Call outside native
     /// lifecycle callbacks, since adapter and device creation can block.
     pub fn new(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
+        Self::open(source, size, false)
+    }
+
+    /// Opens a drawable that requires Immediate presentation, DX12 and classic bindings.
+    pub fn new_for_benchmark(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
+        Self::open(source, size, true)
+    }
+
+    fn open(source: SurfaceSource, size: [u32; 2], immediate: bool) -> Result<Self, RenderError> {
         let frame_graph = clear_graph().map_err(|error| RenderError(error.to_string()))?;
         let backend::Graphics {
             surface,
@@ -67,6 +92,16 @@ impl Drawable {
             resources,
         } = backend::open(&source)?;
         let info = adapter.get_info();
+        if immediate
+            && (info.backend != wgpu::Backend::Dx12
+                || resources.binding_mode() != BindingMode::Classic)
+        {
+            return Err(RenderError(format!(
+                "benchmark requires DX12 and classic bindings; selected {:?} with {:?}",
+                info.backend,
+                resources.binding_mode()
+            )));
+        }
         tracing::info!(
             adapter = %info.name,
             backend = ?info.backend,
@@ -83,6 +118,8 @@ impl Drawable {
             scene: SceneRenderer::default(),
             size,
             surface_format: None,
+            immediate,
+            last_present: None,
         })
     }
 
@@ -124,6 +161,35 @@ impl Drawable {
         self.scene.pipeline_creations()
     }
 
+    /// Returns the active graphics configuration after preparing the benchmark pipelines.
+    pub fn benchmark_graphics(&self) -> Option<BenchmarkGraphics> {
+        let format = self.surface_format.filter(|_| self.immediate)?;
+        let info = self.adapter.get_info();
+        Some(BenchmarkGraphics {
+            adapter: info.name,
+            driver: format!("{} {}", info.driver, info.driver_info)
+                .trim()
+                .into(),
+            format: format!("{format:?}"),
+            pipelines: self.scene.pipeline_keys(),
+        })
+    }
+
+    /// Returns the monotonic timestamp captured at return from the last benchmark present.
+    pub fn last_benchmark_present(&self) -> Option<Instant> {
+        self.last_present
+    }
+
+    /// Waits once for work submitted on this drawable and returns the wait duration.
+    pub fn drain(&self) -> Result<Duration, RenderError> {
+        let start = Instant::now();
+        self.resources
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| RenderError(format!("could not drain the graphics queue: {error}")))?;
+        Ok(start.elapsed())
+    }
+
     /// Records the current size in physical pixels for the next redraw.
     pub fn resize(&mut self, size: [u32; 2]) {
         if self.size != size {
@@ -158,7 +224,28 @@ impl Drawable {
         let mut config = surface
             .get_default_config(&self.adapter, width, height)
             .ok_or_else(|| RenderError("graphics adapter does not support the surface".into()))?;
-        if !SCENE_COLOR_FORMATS.contains(&config.format) {
+        if self.immediate {
+            let caps = surface.get_capabilities(&self.adapter);
+            if !caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
+                return Err(RenderError(
+                    "graphics surface does not support Immediate presentation".into(),
+                ));
+            }
+            config.present_mode = wgpu::PresentMode::Immediate;
+            config.format = caps
+                .formats
+                .into_iter()
+                .find(|format| {
+                    matches!(
+                        format,
+                        wgpu::TextureFormat::Bgra8UnormSrgb
+                            | wgpu::TextureFormat::Bgra8Unorm
+                            | wgpu::TextureFormat::Rgba8UnormSrgb
+                            | wgpu::TextureFormat::Rgba8Unorm
+                    )
+                })
+                .ok_or_else(|| RenderError("graphics surface offers no 8-bit SDR format".into()))?;
+        } else if !SCENE_COLOR_FORMATS.contains(&config.format) {
             config.format = surface
                 .get_capabilities(&self.adapter)
                 .formats
@@ -242,8 +329,14 @@ impl Drawable {
         self.resources.queue.submit([encoder.finish()]);
         self.source.pre_present_notify();
         self.resources.queue.present(frame);
+        if self.immediate {
+            self.last_present = Some(Instant::now());
+        }
         if suboptimal {
             self.surface_format = None;
+            if self.immediate {
+                return Ok(DrawOutcome::Retry);
+            }
         }
         tracing::debug!(
             width = self.size[0],

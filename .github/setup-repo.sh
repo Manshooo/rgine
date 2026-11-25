@@ -127,6 +127,8 @@ milestone "Phase 6. Launcher + Packaging + Audio" \
   "Project manager, engine version selection, package formats, .pak, Kira adapter. Exit: one command produces runnable packages for the target platforms."
 milestone "Phase 7. Stabilization / 0.1.0" \
   "Performance, diagnostics, docs, release automation, regression game, API and schema snapshot checks. Exit: from an empty machine to a playable project in 15 minutes or less."
+milestone "Render follow-ups" \
+  "Deferred rendering improvements after Render v1: non-uniform material indexing, native surface reattachment, bindless storage resources, and specular image-based lighting."
 
 echo
 echo "Done."

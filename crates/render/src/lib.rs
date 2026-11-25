@@ -8,6 +8,6 @@ pub mod resources;
 pub mod scene;
 mod shaders;
 
-pub use drawable::{DrawOutcome, Drawable, RenderError};
+pub use drawable::{BenchmarkGraphics, DrawOutcome, Drawable, RenderError};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,6 +1,6 @@
 # Project status
-**Date**: 2026-11-24
-**Milestone**: 2 - Render v1, in progress
+**Date**: 2026-11-25
+**Milestone**: 3 - Assets + Scenes, next
 **Version**: 0.1.0-dev
 
 ## Phase 0 exit
@@ -40,21 +40,23 @@ The cross-cutting iteration budget criterion in ROADMAP is not enforced yet; see
 - The type registry and reflection derive, archetype and sparse storage, filtered queries, change detection, deferred commands, relationships, required components and hooks are in `master`. The app runs the deterministic ECS schedule with fixed steps, plugins and input recording.
 - [Issue #23](https://github.com/Manshooo/rgine/issues/23) tracks native OS timestamps as follow-up work. The current input adapter supplies monotonic receipt timestamps with explicit provenance.
 
-## Phase 2 progress
+## Phase 2 exit
 
 Phase 2 uses wgpu 30.0.2 with minimum Rust 1.87. The [surface spike](https://github.com/Manshooo/rgine/issues/37) exercises the platform contract in [ADR 0014](docs/adr/0014-render-backend-and-surface-lifetime.md). The app presents a clear color through the regular window loop ([#38](https://github.com/Manshooo/rgine/issues/38)), and the clear pass now executes through the compiled render graph ([#39](https://github.com/Manshooo/rgine/issues/39), [ADR 0015](docs/adr/0015-render-graph.md)). The [quick start](README.md#первый-запуск) shows how to run the example and the input replay test.
 
-The graph culls unused passes and reuses transient allocations based on the retained passes ([#40](https://github.com/Manshooo/rgine/issues/40), [#41](https://github.com/Manshooo/rgine/issues/41), [ADR 0016](docs/adr/0016-transient-render-graph-allocations.md)). The device resource table supports vertex, index and uniform buffers with classic uniform bind groups ([#42](https://github.com/Manshooo/rgine/issues/42), [ADR 0017](docs/adr/0017-render-resource-table.md)).
+The graph culls unused passes and reuses transient allocations ([#40](https://github.com/Manshooo/rgine/issues/40), [#41](https://github.com/Manshooo/rgine/issues/41), [ADR 0016](docs/adr/0016-transient-render-graph-allocations.md)). The resource table supports vertex, index and uniform buffers, sampled textures and samplers, and adapter-selected classic or draw-uniform bindless bindings ([#42](https://github.com/Manshooo/rgine/issues/42), [#55](https://github.com/Manshooo/rgine/issues/55), [#44](https://github.com/Manshooo/rgine/issues/44), [ADR 0017](docs/adr/0017-render-resource-table.md)).
+
+The procedural ECS scene renders opaque metallic-roughness materials, directional shadows and a skybox ([#43](https://github.com/Manshooo/rgine/issues/43), [#46](https://github.com/Manshooo/rgine/issues/46), [#47](https://github.com/Manshooo/rgine/issues/47), [#48](https://github.com/Manshooo/rgine/issues/48)). The build caps shader variants, CI validates the pipeline catalogue, and the renderer prepares the applicable pipelines before first use ([#45](https://github.com/Manshooo/rgine/issues/45), [#49](https://github.com/Manshooo/rgine/issues/49)).
+
+The [exit run](https://github.com/Manshooo/rgine/issues/51) passed on the approved Windows machine with a Core i7-9850H and Intel UHD Graphics 630. With DX12, classic bindings and a 1280 × 720 SDR drawable in Immediate mode, the 20-second orbit delivered 13,260 frames at 662.84 presents/s, with p99 at 3.05 ms and a maximum interval of 19.47 ms. Three graphics pipelines were prepared before the 120-frame warmup. The warmup and orbit each created zero pipelines. The [measurement protocol](docs/render-v1-measurement.md) defines the workload and thresholds and records the originally specified RTX 3060 configuration.
+
+The Linux CI host job enforces the 10-second incremental gameplay build budget using the procedural scene example. Deferred rendering work is tracked in [Render follow-ups](https://github.com/Manshooo/rgine/milestone/9).
 
 ## Next
 
-- Render procedural meshes with a camera, depth testing and scene state extracted after ECS simulation ([#43](https://github.com/Manshooo/rgine/issues/43)).
-- Add texture and sampler entries to the resource table ([#55](https://github.com/Manshooo/rgine/issues/55)), then implement the adapter-selected bindless profile ([#44](https://github.com/Manshooo/rgine/issues/44)).
-- The shader variant budget ([#45](https://github.com/Manshooo/rgine/issues/45)) and the reference measurement protocol ([#50](https://github.com/Manshooo/rgine/issues/50)) can start independently. The protocol defines the measurements for the Render v1 exit run ([#51](https://github.com/Manshooo/rgine/issues/51)).
-
-The [Render v1 milestone](https://github.com/Manshooo/rgine/milestone/3) tracks the remaining work and dependencies.
+[Phase 3: Assets + Scenes](https://github.com/Manshooo/rgine/milestone/4) starts with stable asset identities, reproducible asset imports and scene persistence.
 
 ## Deferred
-- [ ] Iteration budget harness in CI. The ECS benchmark reports fixed-update timing. Phase 2 will establish which renderer iteration budgets can be measured and enforced.
+- [ ] CI checks the incremental gameplay build budget. The remaining iteration budgets need editor and asset workflows before CI can measure them.
 - [ ] `engine-cli new` creating a project from `templates/`. Not required by the phase 0 exit criterion; it belongs with the launcher and packaging work in phase 6, or earlier if the templates are needed to test the asset pipeline.
 - [ ] Public API and schema snapshot checks (ADR 0005), due with phase 7.

@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The procedural scene example can run the Render v1 camera benchmark and write pipeline preparation timings and raw frame intervals to JSON.
 - The renderer prepares the scene pipelines before drawing and reports pipeline creations during frame delivery. CI validates the full scene catalogue in both resource binding modes.
 - The procedural scene uses diffuse hemisphere lighting to show a colored floor reflection on shaded dielectric surfaces.
 - The procedural scene renders directional cast shadows on metallic-roughness surfaces in both resource binding modes.

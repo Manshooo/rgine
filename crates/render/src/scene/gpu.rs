@@ -173,6 +173,17 @@ pub(crate) struct SceneRenderer {
 }
 
 impl SceneRenderer {
+    pub(crate) fn pipeline_keys(&self) -> Vec<String> {
+        let mut keys: Vec<_> = self
+            .pipelines
+            .entries
+            .keys()
+            .map(|key| format!("{key:?}"))
+            .collect();
+        keys.sort_unstable();
+        keys
+    }
+
     pub(crate) fn prepare_pipelines(
         &mut self,
         table: &mut ResourceTable,

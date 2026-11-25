@@ -1,6 +1,7 @@
 //! Run the first 3D scene with `cargo run --locked -p engine-app --example procedural_scene`.
 //! Spheres from left to right: smooth dielectric, rough dielectric, smooth metal, rough metal.
 
+use engine_app::App;
 use engine_app::core::glam::{Mat4, Vec3};
 use engine_app::ecs::{Component, World};
 use engine_app::platform::{Input, KeyCode, PhysicalKey, WindowDesc};
@@ -8,13 +9,29 @@ use engine_app::scene::{
     Camera, DirectionalLight, HemisphereLight, Mesh, MeshRegistry, PbrMaterial, Renderable,
     Transform,
 };
-use engine_app::{App, RenderError};
+use std::path::PathBuf;
+use std::process::ExitCode;
 
 #[derive(Component)]
 struct OptionalBox;
 
-fn main() -> Result<(), RenderError> {
+fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     engine_app::core::init_logging();
+    let mut args = std::env::args_os().skip(1);
+    let report_path = if args
+        .next()
+        .is_some_and(|arg| arg == "--render-v1-benchmark")
+    {
+        let path = args
+            .next()
+            .map_or_else(|| PathBuf::from("render-v1-benchmark.json"), PathBuf::from);
+        if args.next().is_some() {
+            return Err("usage: procedural_scene --render-v1-benchmark [report.json]".into());
+        }
+        Some(path)
+    } else {
+        None
+    };
     let mut meshes = MeshRegistry::default();
     let cube = meshes.insert(Mesh::cube());
     let plane = meshes.insert(
@@ -92,6 +109,29 @@ fn main() -> Result<(), RenderError> {
         )
         .unwrap();
 
+    let clear = [0.025, 0.035, 0.06, 1.0];
+    if let Some(path) = report_path {
+        let adapter = std::env::var("RGINE_BENCHMARK_ADAPTER")
+            .unwrap_or_else(|_| "NVIDIA GeForce RTX 3060".into());
+        let report = app.run_scene_benchmark(meshes, clear, adapter)?;
+        let output = std::fs::File::create(&path)?;
+        serde_json::to_writer_pretty(output, &report)?;
+        println!(
+            "Render v1 benchmark {}. Report written to {}.",
+            if report.passed() {
+                "passed"
+            } else {
+                "missed the frame delivery targets"
+            },
+            path.display()
+        );
+        return Ok(if report.passed() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        });
+    }
+
     app.add_system(move |world, commands, step, _| {
         let mut orbit_changed = false;
         let mut toggle = false;
@@ -141,7 +181,8 @@ fn main() -> Result<(), RenderError> {
             }
         }
     });
-    app.run_scene(meshes, [0.025, 0.035, 0.06, 1.0])
+    app.run_scene(meshes, clear)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn optional_box(world: &World) -> Option<engine_app::ecs::Entity> {

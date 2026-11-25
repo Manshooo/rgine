@@ -9,6 +9,7 @@
 pub use engine_core as core;
 pub use engine_ecs as ecs;
 pub use engine_platform as platform;
+pub use frames::BenchmarkReport;
 pub use frames::RenderError;
 pub use replay::{InputRecording, ReplayError};
 pub use simulation::{FixedStep, Resources, Simulation, StepContext};
@@ -133,7 +134,7 @@ impl App {
 
     /// Runs the windowed app and presents a linear RGBA clear color on redraw.
     pub fn run_rendered(self, clear_color: [f64; 4]) -> Result<(), RenderError> {
-        self.run_with_frames(Frames::new(clear_color))
+        self.run_with_frames(Frames::new(clear_color)).map(drop)
     }
 
     /// Renders scene components extracted from the world after each fixed update.
@@ -143,22 +144,46 @@ impl App {
         meshes: scene::MeshRegistry,
         clear_color: [f64; 4],
     ) -> Result<(), RenderError> {
-        let frames = Frames::with_scene(
+        let frames = self.scene_frames(meshes, clear_color);
+        self.run_with_frames(frames).map(drop)
+    }
+
+    /// Measures the Render v1 camera pass in a 1280 × 720 window using DX12 and classic bindings.
+    /// A completed run returns measurements even when they fall outside the pass thresholds.
+    pub fn run_scene_benchmark(
+        mut self,
+        meshes: scene::MeshRegistry,
+        clear_color: [f64; 4],
+        expected_adapter: String,
+    ) -> Result<BenchmarkReport, RenderError> {
+        self.window = self.window.with_size(1280, 720);
+        let frames = self
+            .scene_frames(meshes, clear_color)
+            .with_benchmark(expected_adapter);
+        self.run_with_frames(frames)?.finish_benchmark()
+    }
+
+    fn scene_frames(&self, meshes: scene::MeshRegistry, clear_color: [f64; 4]) -> Frames {
+        Frames::with_scene(
             clear_color,
             meshes,
             self.simulation.world(),
             self.directional_light,
             self.hemisphere_light,
             self.skybox_enabled,
-        );
-        self.run_with_frames(frames)
+        )
     }
 
-    fn run_with_frames(self, frames: Frames) -> Result<(), RenderError> {
+    fn run_with_frames(self, frames: Frames) -> Result<Frames, RenderError> {
         let mut runner = Runner::new(self);
         runner.frames = Some(frames);
         engine_platform::run(&mut runner).map_err(RenderError::Platform)?;
-        runner.render_failure.map_or(Ok(()), Err)
+        match runner.render_failure {
+            Some(error) => Err(error),
+            None => Ok(runner
+                .frames
+                .expect("frames installed before the event loop")),
+        }
     }
 
     /// Runs the windowed simulation and returns its input recording when the
@@ -215,6 +240,9 @@ impl Runner {
                     self.simulation.discard_pending_input();
                     commands.close_windows(&self.open);
                     self.open.clear();
+                    if self.frames.as_ref().is_some_and(Frames::is_benchmark) {
+                        commands.exit();
+                    }
                 }
                 Event::Window {
                     window,
@@ -244,8 +272,10 @@ impl Runner {
         let Some(frames) = &mut self.frames else {
             return;
         };
-        let changed = steps > 0 && frames.extract_for_redraw(self.simulation.world());
-        if redraw {
+        let changed = !frames.is_benchmark()
+            && steps > 0
+            && frames.extract_for_redraw(self.simulation.world());
+        if redraw || frames.benchmark_interrupted() {
             if let Err(error) = frames.draw(&self.open, commands) {
                 if self.render_failure.is_none() {
                     self.render_failure = Some(error);
