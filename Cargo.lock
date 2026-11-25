@@ -547,6 +547,13 @@ dependencies = [
 [[package]]
 name = "engine-scene"
 version = "0.1.0"
+dependencies = [
+ "engine-core",
+ "ron",
+ "serde",
+ "thiserror 2.0.20",
+ "uuid",
+]
 
 [[package]]
 name = "engine-script"
