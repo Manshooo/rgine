@@ -97,7 +97,7 @@ As the corresponding roadmap phases land, these join the list: the public API an
 
 GitHub Issues. One issue per unit of work, and every pull request closes exactly one.
 
-**Milestones are roadmap phases.** `Phase 1. ECS + App Loop`, `Phase 2. Render v1`, and so on. An issue with no milestone is backlog - that is what backlog means here, not a separate list.
+**Roadmap milestones track phase exits.** `Phase 1. ECS + App Loop`, `Phase 2. Render v1`, and so on. The `Render follow-ups` milestone groups deferred rendering work. Issues without a milestone remain in the backlog.
 
 **Labels:**
 

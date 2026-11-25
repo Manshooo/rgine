@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Instant;
 
 use engine_ecs::World;
 use engine_platform::{Commands, PlatformError, SurfaceSource, WindowEvent, WindowId};
@@ -6,6 +7,10 @@ use engine_render::scene::{MeshRegistry, Scene};
 use engine_render::{DrawOutcome, Drawable};
 
 use crate::scene;
+
+mod benchmark;
+pub use benchmark::BenchmarkReport;
+use benchmark::{Benchmark, DRAWABLE_SIZE};
 
 /// A failure from a rendered application.
 #[derive(Debug)]
@@ -15,6 +20,8 @@ pub enum RenderError {
     Platform(PlatformError),
     /// The renderer could not initialize or present a frame.
     Graphics(engine_render::RenderError),
+    /// The benchmark configuration changed or the pass was interrupted.
+    Benchmark(String),
 }
 
 impl fmt::Display for RenderError {
@@ -22,6 +29,7 @@ impl fmt::Display for RenderError {
         match self {
             Self::Platform(error) => error.fmt(formatter),
             Self::Graphics(error) => error.fmt(formatter),
+            Self::Benchmark(message) => formatter.write_str(message),
         }
     }
 }
@@ -31,6 +39,7 @@ impl std::error::Error for RenderError {
         match self {
             Self::Platform(error) => Some(error),
             Self::Graphics(error) => Some(error),
+            Self::Benchmark(_) => None,
         }
     }
 }
@@ -55,6 +64,7 @@ pub(crate) struct Frames {
     scene: Option<SceneFrames>,
     size: [u32; 2],
     occluded: bool,
+    benchmark: Option<Benchmark>,
 }
 
 impl Frames {
@@ -65,7 +75,32 @@ impl Frames {
             scene: None,
             size: [0, 0],
             occluded: false,
+            benchmark: None,
         }
+    }
+
+    pub(crate) fn with_benchmark(mut self, expected_adapter: String) -> Self {
+        self.benchmark = Some(Benchmark::new(expected_adapter));
+        self
+    }
+
+    pub(crate) fn is_benchmark(&self) -> bool {
+        self.benchmark.is_some()
+    }
+
+    pub(crate) fn finish_benchmark(mut self) -> Result<BenchmarkReport, RenderError> {
+        self.benchmark
+            .take()
+            .and_then(|benchmark| benchmark.report)
+            .ok_or_else(|| {
+                RenderError::Benchmark("the window closed before the benchmark completed".into())
+            })
+    }
+
+    pub(crate) fn benchmark_interrupted(&self) -> bool {
+        self.benchmark
+            .as_ref()
+            .is_some_and(|benchmark| benchmark.interrupted)
     }
 
     pub(crate) fn with_scene(
@@ -109,6 +144,9 @@ impl Frames {
 
     pub(crate) fn detach(&mut self) {
         self.surface = None;
+        if let Some(benchmark) = &mut self.benchmark {
+            benchmark.interrupted = true;
+        }
     }
 
     pub(crate) fn window_event(
@@ -120,12 +158,18 @@ impl Frames {
         match event {
             WindowEvent::Resized { width, height } => {
                 self.size = [width, height];
+                if let Some(benchmark) = &mut self.benchmark {
+                    benchmark.interrupted |= benchmark.started() && self.size != DRAWABLE_SIZE;
+                }
                 if !self.size.contains(&0) {
                     commands.request_redraw(&[window]);
                 }
             }
             WindowEvent::Occluded(occluded) => {
                 self.occluded = occluded;
+                if let Some(benchmark) = &mut self.benchmark {
+                    benchmark.interrupted |= occluded;
+                }
                 if !occluded {
                     commands.request_redraw(&[window]);
                 }
@@ -141,6 +185,17 @@ impl Frames {
         windows: &[WindowId],
         commands: &mut Commands,
     ) -> Result<(), RenderError> {
+        if self.benchmark_interrupted() {
+            return Err(RenderError::Benchmark(
+                "the benchmark drawable changed or stopped being visible".into(),
+            ));
+        }
+        if self.is_benchmark() && self.size != DRAWABLE_SIZE {
+            let [width, height] = self.size;
+            return Err(RenderError::Benchmark(format!(
+                "benchmark requires a 1280 × 720 physical drawable; got {width} × {height}"
+            )));
+        }
         if self.occluded || self.size.contains(&0) {
             return Ok(());
         }
@@ -148,25 +203,48 @@ impl Frames {
             .surface
             .take_if(|surface| matches!(surface, Surface::Pending(_)))
         {
-            let mut drawable = Drawable::new(source, self.size).map_err(RenderError::Graphics)?;
+            let start = Instant::now();
+            let mut drawable = if self.is_benchmark() {
+                Drawable::new_for_benchmark(source, self.size)
+            } else {
+                Drawable::new(source, self.size)
+            }
+            .map_err(RenderError::Graphics)?;
+            let startup = start.elapsed();
             if let Some(scene) = &self.scene {
                 drawable.set_directional_light(scene.light);
                 drawable.set_hemisphere_light(scene.hemisphere_light);
                 drawable.set_skybox_enabled(scene.skybox_enabled);
+                let prepare = Instant::now();
                 drawable
                     .prepare_scene_pipelines()
                     .map_err(RenderError::Graphics)?;
+                if let Some(benchmark) = &mut self.benchmark {
+                    benchmark.prepare(&drawable, scene, startup, prepare.elapsed())?;
+                }
             }
             self.surface = Some(Surface::Ready(Box::new(drawable)));
         }
         if let Some(Surface::Ready(drawable)) = &mut self.surface {
             drawable.resize(self.size);
+            let end_of_orbit =
+                if let (Some(benchmark), Some(scene)) = (&self.benchmark, &mut self.scene) {
+                    benchmark.pose(&mut scene.snapshot)?
+                } else {
+                    false
+                };
             let outcome = match &self.scene {
                 Some(scene) => drawable.draw_scene(self.color, &scene.meshes, &scene.snapshot),
                 None => drawable.draw(self.color),
             }
             .map_err(RenderError::Graphics)?;
-            if outcome == DrawOutcome::Retry {
+            if let Some(benchmark) = &mut self.benchmark {
+                if benchmark.present(drawable, outcome, end_of_orbit)? {
+                    commands.exit();
+                } else {
+                    commands.request_redraw(windows);
+                }
+            } else if outcome == DrawOutcome::Retry {
                 commands.request_redraw(windows);
             }
         }
