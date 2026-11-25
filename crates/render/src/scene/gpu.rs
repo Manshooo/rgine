@@ -2,17 +2,20 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::num::NonZeroU64;
 use std::time::Instant;
 
+use engine_asset::ktx2::{ColorSpace, Texture};
 use engine_core::glam::{Mat4, Vec3};
 
 use super::{
-    DirectionalLight, HemisphereLight, Mesh, MeshKey, MeshRegistry, PbrMaterial, Scene, SceneObject,
+    DirectionalLight, HemisphereLight, MaterialTexture, Mesh, MeshKey, MeshRegistry, PbrMaterial,
+    Scene, SceneObject,
 };
 use crate::RenderError;
 use crate::graph::{CompiledGraph, RenderGraph};
 use crate::resources::{
     BINDLESS_SAMPLERS, BINDLESS_TEXTURES, BindingMode, BufferDescriptor, BufferHandle, BufferKind,
     ResourceError, ResourceTable, SampledBinding, SampledGroupHandle, SamplerDescriptor,
-    TextureDescriptor, UniformBinding, UniformGroupHandle, checked_gpu,
+    SamplerFilter, SamplerHandle, TextureDescriptor, TextureFormat, UniformBinding,
+    UniformGroupHandle, checked_gpu,
 };
 use crate::shaders::ShaderVariantKey;
 
@@ -168,7 +171,8 @@ pub(crate) struct SceneRenderer {
     pipelines: ScenePipelines,
     target: Option<SceneTargets>,
     meshes: HashMap<MeshKey, GpuMesh>,
-    materials: [Option<MaterialBinding>; 2],
+    materials: HashMap<MaterialTexture, MaterialBinding>,
+    imported_sampler: Option<SamplerHandle>,
     uniforms: Option<ObjectUniforms>,
 }
 
@@ -244,22 +248,39 @@ impl SceneRenderer {
             return Ok(());
         }
         for object in &scene.objects {
-            let mesh = match self.meshes.entry(object.mesh) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    let mesh = meshes.get(object.mesh).ok_or_else(|| {
-                        RenderError(format!(
-                            "mesh {:?} is missing from the scene registry",
-                            object.mesh
-                        ))
-                    })?;
-                    entry.insert(GpuMesh::upload(table, mesh)?)
-                }
+            let Entry::Vacant(entry) = self.meshes.entry(object.mesh) else {
+                continue;
             };
-            let material = &mut self.materials[usize::from(mesh.checkerboard)];
-            if material.is_none() {
-                *material = Some(MaterialBinding::new(table, mesh.checkerboard)?);
-            }
+            let mesh = meshes.get(object.mesh).ok_or_else(|| {
+                RenderError(format!(
+                    "mesh {:?} is missing from the scene registry",
+                    object.mesh
+                ))
+            })?;
+            let binding = match self.materials.entry(mesh.surface) {
+                Entry::Occupied(entry) => *entry.get(),
+                Entry::Vacant(entry) => *entry.insert(match mesh.surface {
+                    MaterialTexture::Solid => MaterialBinding::builtin(table, false)?,
+                    MaterialTexture::Checkerboard => MaterialBinding::builtin(table, true)?,
+                    MaterialTexture::Imported { index, .. } => {
+                        let texture = &meshes.textures[index];
+                        if self.imported_sampler.is_none() {
+                            self.imported_sampler =
+                                Some(table.create_sampler(SamplerDescriptor {
+                                    filter: SamplerFilter::Linear,
+                                    ..SamplerDescriptor::NEAREST_CLAMP
+                                })?);
+                        }
+                        MaterialBinding::imported(
+                            table,
+                            texture,
+                            self.imported_sampler.expect("imported texture sampler"),
+                        )
+                        .map_err(|e| RenderError(format!("{}: {e}", texture.source().display())))?
+                    }
+                }),
+            };
+            entry.insert(GpuMesh::upload(table, mesh, binding)?);
         }
         let mode = table.binding_mode();
         if mode == BindingMode::Bindless {
@@ -269,7 +290,6 @@ impl SceneRenderer {
             self.uniforms = Some(ObjectUniforms::new(table, scene.objects.len())?);
         }
         let meshes = &self.meshes;
-        let materials = &self.materials;
         let frame = SceneUniforms {
             clip,
             eye,
@@ -282,10 +302,7 @@ impl SceneRenderer {
             .expect("object buffers allocated")
             .upload(table, frame, &scene.objects, |object| {
                 let mesh = &meshes[&object.mesh];
-                let indices = materials[usize::from(mesh.checkerboard)]
-                    .expect("object material prepared")
-                    .indices();
-                (mesh.material, indices)
+                (mesh.material, mesh.binding.indices())
             })
     }
 
@@ -366,10 +383,8 @@ impl SceneRenderer {
                 }
                 for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
                     let mesh = &self.meshes[&object.mesh];
-                    let material = self.materials[usize::from(mesh.checkerboard)]
-                        .expect("object material prepared");
                     render.set_bind_group(0, table.gpu_uniform_group(*group)?, &[]);
-                    if let MaterialBinding::Classic(group) = material {
+                    if let MaterialBinding::Classic(group) = mesh.binding {
                         render.set_bind_group(1, &table.sampled_group(group)?.raw, &[]);
                     }
                     mesh.draw(table, &mut render)?;
@@ -533,7 +548,7 @@ struct GpuMesh {
     vertices: BufferHandle,
     indices: BufferHandle,
     index_count: u32,
-    checkerboard: bool,
+    binding: MaterialBinding,
     material: Option<PbrMaterial>,
     bounds_min: Vec3,
     bounds_max: Vec3,
@@ -554,7 +569,11 @@ impl GpuMesh {
         Ok(())
     }
 
-    fn upload(table: &mut ResourceTable, mesh: &Mesh) -> Result<Self, RenderError> {
+    fn upload(
+        table: &mut ResourceTable,
+        mesh: &Mesh,
+        binding: MaterialBinding,
+    ) -> Result<Self, RenderError> {
         let mut bounds_min = Vec3::splat(f32::INFINITY);
         let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
         let vertex_bytes: Vec<_> = mesh
@@ -584,7 +603,7 @@ impl GpuMesh {
                 vertices,
                 indices,
                 index_count: mesh.indices.len() as u32,
-                checkerboard: mesh.checkerboard,
+                binding,
                 material: mesh.material,
                 bounds_min,
                 bounds_max,
@@ -604,7 +623,7 @@ enum MaterialBinding {
 }
 
 impl MaterialBinding {
-    fn new(table: &mut ResourceTable, checkerboard: bool) -> Result<Self, ResourceError> {
+    fn builtin(table: &mut ResourceTable, checkerboard: bool) -> Result<Self, ResourceError> {
         if table.binding_mode() == BindingMode::Bindless && !checkerboard {
             return Ok(Self::Bindless([0; 2]));
         }
@@ -626,19 +645,45 @@ impl MaterialBinding {
                 return Err(error);
             }
         };
-        let binding = SampledBinding { texture, sampler };
-        let material =
-            table
-                .write_texture(texture, 0, 0, texels)
-                .and_then(|()| match table.binding_mode() {
-                    BindingMode::Classic => table.create_sampled_group(binding).map(Self::Classic),
-                    BindingMode::Bindless => table.bindless_indices(binding).map(Self::Bindless),
-                });
+        let material = table
+            .write_texture(texture, 0, 0, texels)
+            .and_then(|()| Self::bind(table, SampledBinding { texture, sampler }));
         if material.is_err() {
             table.release_sampler(sampler)?;
             table.release_texture(texture)?;
         }
         material
+    }
+
+    fn imported(
+        table: &mut ResourceTable,
+        asset: &Texture,
+        sampler: SamplerHandle,
+    ) -> Result<Self, ResourceError> {
+        let mut descriptor = TextureDescriptor::sampled_rgba8(asset.size());
+        descriptor.format = match asset.color_space() {
+            ColorSpace::Linear => TextureFormat::Rgba8Unorm,
+            ColorSpace::Srgb => TextureFormat::Rgba8UnormSrgb,
+        };
+        let levels = asset.levels();
+        descriptor.mip_levels = levels.len() as u32;
+        descriptor.view.mip_level_count = descriptor.mip_levels;
+        let texture = table.create_texture(descriptor)?;
+        let material = levels
+            .enumerate()
+            .try_for_each(|(mip, texels)| table.write_texture(texture, mip as u32, 0, texels))
+            .and_then(|()| Self::bind(table, SampledBinding { texture, sampler }));
+        if material.is_err() {
+            table.release_texture(texture)?;
+        }
+        material
+    }
+
+    fn bind(table: &mut ResourceTable, binding: SampledBinding) -> Result<Self, ResourceError> {
+        match table.binding_mode() {
+            BindingMode::Classic => table.create_sampled_group(binding).map(Self::Classic),
+            BindingMode::Bindless => table.bindless_indices(binding).map(Self::Bindless),
+        }
     }
 
     fn indices(self) -> [u32; 2] {

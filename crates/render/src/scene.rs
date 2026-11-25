@@ -4,6 +4,7 @@ mod gpu;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use engine_asset::{gltf_prop::Prop, ktx2::Texture};
 use engine_core::glam::{Mat4, Vec3};
 
 pub(crate) use gpu::{SCENE_COLOR_FORMATS, SceneRenderer};
@@ -21,6 +22,7 @@ pub struct MeshKey {
 pub struct MeshRegistry {
     id: u64,
     meshes: Vec<Mesh>,
+    textures: Vec<Texture>,
 }
 
 impl Default for MeshRegistry {
@@ -28,18 +30,42 @@ impl Default for MeshRegistry {
         Self {
             id: NEXT_REGISTRY.fetch_add(1, Ordering::Relaxed),
             meshes: Vec::new(),
+            textures: Vec::new(),
         }
     }
 }
 
 impl MeshRegistry {
     /// Register the meshes of a static glTF prop and return its opaque instances.
-    pub fn register_prop(
+    pub fn register_prop(&mut self, prop: &Prop) -> std::io::Result<Vec<SceneObject>> {
+        self.register(prop, None)
+    }
+
+    /// Register a static glTF prop and use the KTX2 texture as the base color
+    /// map of each primitive. The mesh UVs and material factors still apply.
+    pub fn register_textured_prop(
         &mut self,
-        prop: &engine_asset::gltf_prop::Prop,
+        prop: &Prop,
+        base_color: Texture,
+    ) -> std::io::Result<Vec<SceneObject>> {
+        self.register(prop, Some(base_color))
+    }
+
+    fn register(
+        &mut self,
+        prop: &Prop,
+        texture: Option<Texture>,
     ) -> std::io::Result<Vec<SceneObject>> {
         use std::io::{Error, ErrorKind};
         let invalid = || Error::new(ErrorKind::InvalidData, "invalid cached glTF geometry");
+        let surface = if texture.is_some() {
+            MaterialTexture::Imported {
+                registry: self.id,
+                index: self.textures.len(),
+            }
+        } else {
+            MaterialTexture::Solid
+        };
         let mut meshes = Vec::new();
         for mesh in &prop.meshes {
             let mut primitives = Vec::new();
@@ -67,7 +93,7 @@ impl MeshRegistry {
                     Mesh {
                         vertices,
                         indices: p.indices.clone(),
-                        checkerboard: false,
+                        surface,
                         material: Some(PbrMaterial::new(p.metallic, p.roughness)),
                     },
                     p.base_color,
@@ -77,6 +103,9 @@ impl MeshRegistry {
         }
         if prop.instances.iter().any(|i| i.mesh >= meshes.len()) {
             return Err(invalid());
+        }
+        if let Some(texture) = texture {
+            self.textures.push(texture);
         }
         let keys: Vec<Vec<_>> = meshes
             .into_iter()
@@ -111,6 +140,13 @@ impl MeshRegistry {
         }
         self.meshes.get(key.index)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum MaterialTexture {
+    Solid,
+    Checkerboard,
+    Imported { registry: u64, index: usize },
 }
 
 struct Vertex {
@@ -203,7 +239,7 @@ impl Default for HemisphereLight {
 pub struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-    checkerboard: bool,
+    surface: MaterialTexture,
     material: Option<PbrMaterial>,
 }
 
@@ -213,7 +249,7 @@ impl Mesh {
         let mut mesh = Self {
             vertices: Vec::with_capacity(24),
             indices: Vec::with_capacity(36),
-            checkerboard: false,
+            surface: MaterialTexture::Solid,
             material: None,
         };
         for (normal, tangent) in [
@@ -234,7 +270,7 @@ impl Mesh {
         let mut mesh = Self {
             vertices: Vec::with_capacity(4),
             indices: Vec::with_capacity(6),
-            checkerboard: false,
+            surface: MaterialTexture::Solid,
             material: None,
         };
         mesh.quad(Vec3::ZERO, Vec3::Y, Vec3::X);
@@ -280,7 +316,7 @@ impl Mesh {
         Self {
             vertices,
             indices,
-            checkerboard: false,
+            surface: MaterialTexture::Solid,
             material: None,
         }
     }
@@ -293,7 +329,7 @@ impl Mesh {
 
     /// Samples a built-in checkerboard on each face, tinted by the object's color.
     pub fn with_checkerboard(mut self) -> Self {
-        self.checkerboard = true;
+        self.surface = MaterialTexture::Checkerboard;
         self
     }
 

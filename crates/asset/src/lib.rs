@@ -2,6 +2,7 @@
 
 mod cache;
 pub mod gltf_prop;
+pub mod ktx2;
 pub use cache::{ImportCache, ImportSettings, Importer};
 
 use std::collections::BTreeMap;
