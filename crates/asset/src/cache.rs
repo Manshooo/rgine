@@ -34,13 +34,28 @@ impl ImportCache {
         source: &[u8],
         settings: &ImportSettings,
     ) -> io::Result<PathBuf> {
+        self.import_with_inputs(I::VERSION, &[source], settings, |output| {
+            I::import(source, settings, output)
+        })
+    }
+
+    pub(crate) fn import_with_inputs(
+        &self,
+        version: &str,
+        inputs: &[&[u8]],
+        settings: &ImportSettings,
+        import: impl FnOnce(&mut fs::File) -> io::Result<()>,
+    ) -> io::Result<PathBuf> {
         // Maps are ordered. Pin line endings and preserve numeric types across hosts.
         let config = ron::ser::PrettyConfig::new()
             .new_line("\n")
             .number_suffixes(true);
         let normalized = ron::ser::to_string_pretty(settings, config).map_err(io::Error::other)?;
         let mut hash = blake3::Hasher::new_derive_key("rgine import cache v1");
-        for field in [I::VERSION.as_bytes(), normalized.as_bytes(), source] {
+        for field in [version.as_bytes(), normalized.as_bytes()]
+            .into_iter()
+            .chain(inputs.iter().copied())
+        {
             hash.update(&(field.len() as u64).to_le_bytes());
             hash.update(field);
         }
@@ -50,7 +65,7 @@ impl ImportCache {
         }
         fs::create_dir_all(&self.root)?;
         let mut temp = tempfile::NamedTempFile::new_in(&self.root)?;
-        I::import(source, settings, temp.as_file_mut())?;
+        import(temp.as_file_mut())?;
         temp.as_file().sync_all()?;
         match temp.persist_noclobber(&path) {
             Ok(_) => Ok(path),

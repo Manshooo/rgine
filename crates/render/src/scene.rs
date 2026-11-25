@@ -33,6 +33,68 @@ impl Default for MeshRegistry {
 }
 
 impl MeshRegistry {
+    /// Register the meshes of a static glTF prop and return its opaque instances.
+    pub fn register_prop(
+        &mut self,
+        prop: &engine_asset::gltf_prop::Prop,
+    ) -> std::io::Result<Vec<SceneObject>> {
+        use std::io::{Error, ErrorKind};
+        let invalid = || Error::new(ErrorKind::InvalidData, "invalid cached glTF geometry");
+        let mut meshes = Vec::new();
+        for mesh in &prop.meshes {
+            let mut primitives = Vec::new();
+            for p in mesh {
+                if p.positions.len() != p.normals.len()
+                    || p.positions.len() != p.uv.len()
+                    || p.indices.is_empty()
+                    || p.indices.len() % 3 != 0
+                    || p.indices.iter().any(|&i| i as usize >= p.positions.len())
+                {
+                    return Err(invalid());
+                }
+                let vertices = p
+                    .positions
+                    .iter()
+                    .zip(&p.normals)
+                    .zip(&p.uv)
+                    .map(|((pos, normal), uv)| Vertex {
+                        position: Vec3::from(*pos),
+                        normal: Vec3::from(*normal),
+                        uv: *uv,
+                    })
+                    .collect();
+                primitives.push((
+                    Mesh {
+                        vertices,
+                        indices: p.indices.clone(),
+                        checkerboard: false,
+                        material: Some(PbrMaterial::new(p.metallic, p.roughness)),
+                    },
+                    p.base_color,
+                ));
+            }
+            meshes.push(primitives);
+        }
+        if prop.instances.iter().any(|i| i.mesh >= meshes.len()) {
+            return Err(invalid());
+        }
+        let keys: Vec<Vec<_>> = meshes
+            .into_iter()
+            .map(|mesh| mesh.into_iter().map(|(p, c)| (self.insert(p), c)).collect())
+            .collect();
+        let mut objects = Vec::new();
+        for i in &prop.instances {
+            for &(mesh, color) in &keys[i.mesh] {
+                objects.push(SceneObject {
+                    mesh,
+                    color,
+                    transform: Mat4::from_cols_array(&i.transform),
+                });
+            }
+        }
+        Ok(objects)
+    }
+
     /// Registers geometry for the lifetime of the scene.
     pub fn insert(&mut self, mesh: Mesh) -> MeshKey {
         let index = self.meshes.len();

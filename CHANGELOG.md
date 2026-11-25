@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Static glTF props can be imported with cached geometry, node transforms and opaque PBR factors. The `gltf_prop` example displays a level marker with an external mesh buffer.
 - Pure asset imports can reuse a disk artifact keyed by source bytes, normalized settings and a versioned importer name.
 - Source assets keep their GUID and importer settings in a versioned RON sidecar. Scanning detects duplicate GUIDs and reports both source paths.
 - The procedural scene example can run the Render v1 camera benchmark and write pipeline preparation timings and raw frame intervals to JSON.

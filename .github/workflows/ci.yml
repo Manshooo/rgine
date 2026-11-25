@@ -35,6 +35,9 @@ jobs:
           rustup target add aarch64-apple-darwin
           cargo check --workspace --all-targets --locked --target aarch64-apple-darwin
       - run: cargo test --workspace --locked
+      - name: Report warm glTF re-import time
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p engine-asset --locked --test gltf_prop measures_warm_reimport_of_ten_thousand_triangles -- --exact --nocapture
       - name: Report shader variants and check the budget
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p engine-render --locked --lib shaders::tests::reports_shader_variants -- --exact --nocapture
