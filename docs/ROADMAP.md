@@ -103,4 +103,6 @@ Phases 0-7 amount to a custom ECS, a PBR renderer, an asset pipeline, an editor 
 Non-MVP backlog
 Animation, navigation, advanced audio, material graph, terrain, networking, iOS, consoles, marketplace. Script debugger integration only if ADR 0007 is ever accepted.
 
+The [Arcanists post-MVP backlog](post-mvp-arcanists.md) breaks the first two-colony prototype into testable tasks, starting with star-system simulation.
+
 Mod loading is a separate track and mostly not a scripting question: an asset mount layer with priority and conflict resolution (useful for DLC, localization and patches regardless of mods), a mod package format and manifest, and a versioned host API surface. A wasm backend is added only if a hard capability boundary for untrusted third-party code is required; where the game already embeds a script VM, mods use that VM.
