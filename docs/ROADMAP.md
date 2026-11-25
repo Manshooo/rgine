@@ -84,7 +84,7 @@ Hierarchy, Inspector, Viewport, gizmos, selection, Asset Browser, Console, Undo/
 **Exit**: level can be built/saved/reopened/played without editor logic leaking into runtime, and the `xtask` dependency check proves it.
 
 ## Phase 6. Launcher + Packaging + Audio
-Project manager, engine version selection, package formats, .pak, Kira adapter.
+Project manager, engine version selection, package formats, .pak, byProd audio adapter using the existing bindings.
 
 **Exit**: one command produces runnable packages for target platforms.
 

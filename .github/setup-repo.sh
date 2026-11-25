@@ -124,7 +124,7 @@ milestone "Phase 4. Physics + 3D Platformer" \
 milestone "Phase 5. Editor" \
   "Hierarchy, inspector generated from the type registry, viewport, gizmos, asset browser, journal-based undo, isolated play world. Exit: a level is built, saved, reopened and played with no editor logic in the runtime, proven by the xtask dependency check."
 milestone "Phase 6. Launcher + Packaging + Audio" \
-  "Project manager, engine version selection, package formats, .pak, Kira adapter. Exit: one command produces runnable packages for the target platforms."
+  "Project manager, engine version selection, package formats, .pak, byProd audio adapter using the existing bindings. Exit: one command produces runnable packages for the target platforms."
 milestone "Phase 7. Stabilization / 0.1.0" \
   "Performance, diagnostics, docs, release automation, regression game, API and schema snapshot checks. Exit: from an empty machine to a playable project in 15 minutes or less."
 milestone "Render follow-ups" \
