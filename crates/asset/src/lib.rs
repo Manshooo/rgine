@@ -1,5 +1,8 @@
 //! Stable source asset identities and versioned RON sidecars.
 
+mod cache;
+pub use cache::{ImportCache, ImportSettings, Importer};
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, ErrorKind, Write};
@@ -63,7 +66,7 @@ impl Sidecar {
 pub struct SourceAsset {
     /// Source path relative to the scanned root.
     pub path: PathBuf,
-    pub importer_settings: BTreeMap<String, ron::Value>,
+    pub importer_settings: ImportSettings,
 }
 
 #[derive(Debug)]
