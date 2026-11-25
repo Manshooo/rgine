@@ -5,3 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+
+[dependencies]
+ron = "0.10"
+serde.workspace = true
+tempfile = "3"
+uuid = { version = "1", features = ["v4", "serde"] }

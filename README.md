@@ -11,7 +11,7 @@
 - Rapier через `PhysicsBackend`;
 - GUID-based asset pipeline;
 - RON scenes/prefabs + migrations;
-- egui editor;
+- редактор сцен с иерархией объектов и инспектором свойств;
 - [декларативный игровой UI с веб-подобной вёрсткой](docs/ROADMAP.md#game-ui);
 - launcher;
 - CLI-first workflow;
