@@ -1,6 +1,7 @@
 //! Stable source asset identities and versioned RON sidecars.
 
 mod cache;
+pub mod gltf_prop;
 pub use cache::{ImportCache, ImportSettings, Importer};
 
 use std::collections::BTreeMap;

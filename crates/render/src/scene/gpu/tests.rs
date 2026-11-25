@@ -484,6 +484,45 @@ fn scene_depth_and_stable_meshes_survive_a_new_device() {
     );
 }
 
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn imported_marker_renders_at_composed_node_transform() {
+    use engine_asset::{
+        ImportCache,
+        gltf_prop::{self, Prop},
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../asset/tests/fixtures/marker.gltf");
+    let dir = tempfile::tempdir().unwrap();
+    let file =
+        gltf_prop::import(&path, &ImportCache::new(dir.path()), &Default::default()).unwrap();
+    let mut registry = MeshRegistry::default();
+    let mut scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: registry.register_prop(&Prop::load(&file).unwrap()).unwrap(),
+    };
+    let gpu = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(gpu.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let mut table = ResourceTable::new(device, queue);
+    let mut renderer = SceneRenderer::default();
+    let center = center_pixel(&mut renderer, &mut table, &registry, &scene);
+    assert!(
+        center[0] > 32 && center[0] > center[1] && center[1] > center[2],
+        "{center:?}"
+    );
+    scene.objects.clear();
+    assert_ne!(
+        center,
+        center_pixel(&mut renderer, &mut table, &registry, &scene)
+    );
+}
+
 fn center_pixel(
     renderer: &mut SceneRenderer,
     table: &mut ResourceTable,

@@ -61,6 +61,10 @@ pub struct Renderable {
     pub color: [f32; 4],
 }
 
+/// Static node matrix relative to the entity transform. Preserves nested scale and shear.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct NodeMatrix(pub Mat4);
+
 pub(crate) fn extract(world: &World) -> Scene {
     let mut scene = Scene::default();
     extract_into(world, &mut scene);
@@ -83,14 +87,16 @@ pub(crate) fn extract_into(world: &World, scene: &mut Scene) {
         });
     world
         .query::<(&Renderable, &Transform)>()
-        .for_each(|_, (renderable, transform)| {
+        .for_each(|entity, (renderable, transform)| {
             scene.objects.push(SceneObject {
                 mesh: renderable.mesh,
                 transform: Mat4::from_scale_rotation_translation(
                     transform.scale,
                     transform.rotation,
                     transform.translation,
-                ),
+                ) * world
+                    .get::<NodeMatrix>(entity)
+                    .map_or(Mat4::IDENTITY, |m| m.0),
                 color: renderable.color,
             });
         });
