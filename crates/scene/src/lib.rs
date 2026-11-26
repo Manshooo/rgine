@@ -5,6 +5,8 @@ mod compiled;
 #[cfg(feature = "authoring")]
 mod compiler;
 #[cfg(feature = "authoring")]
+mod incremental;
+#[cfg(feature = "authoring")]
 mod truth;
 
 pub use compiled::{CompiledScene, SceneEntities, SceneLoadError, SceneNodeId};
@@ -12,6 +14,8 @@ pub use compiled::{CompiledScene, SceneEntities, SceneLoadError, SceneNodeId};
 pub use compiler::AuthoringTrace;
 #[cfg(feature = "authoring")]
 pub use compiler::{CompileError, SceneCompilation, SceneReferences};
+#[cfg(feature = "authoring")]
+pub use incremental::{IncrementalScene, SceneEntityCommands, SceneUpdateError};
 #[cfg(feature = "authoring")]
 pub use truth::{
     Change, JournalEntry, ObjectId, PrefabError, PrefabInstance, PropertyValue, SceneError,

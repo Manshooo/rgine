@@ -17,7 +17,11 @@ impl std::fmt::Display for SceneNodeId {
 /// Resolves compiled references inside the current instantiation.
 pub struct SceneEntities<'a>(&'a [Entity]);
 
-impl SceneEntities<'_> {
+impl<'a> SceneEntities<'a> {
+    pub(crate) fn new(entities: &'a [Entity]) -> Self {
+        Self(entities)
+    }
+
     /// Finds the entity handle allocated for this node index.
     pub fn get(&self, node: SceneNodeId) -> Option<Entity> {
         self.0.get(node.0 as usize).copied()
@@ -103,7 +107,7 @@ impl<T> CompiledScene<T> {
         }
         let mut world = World::new();
         let entities: Vec<_> = self.nodes.iter().map(|_| world.spawn_empty()).collect();
-        let references = SceneEntities(&entities);
+        let references = SceneEntities::new(&entities);
         for (index, (node, &entity)) in self.nodes.iter().zip(&entities).enumerate() {
             if let Some(parent) = node.parent {
                 let node = SceneNodeId(index as u32);
