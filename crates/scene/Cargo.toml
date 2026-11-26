@@ -6,9 +6,17 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+default = ["authoring"]
+authoring = ["dep:engine-core", "dep:ron", "dep:uuid"]
+
 [dependencies]
-engine-core.workspace = true
-ron = "0.10"
+engine-core = { workspace = true, optional = true }
+engine-ecs.workspace = true
+ron = { version = "0.10", optional = true }
 serde.workspace = true
 thiserror = "2"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"], optional = true }
+
+[dev-dependencies]
+ron = "0.10"
