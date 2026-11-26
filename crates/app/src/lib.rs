@@ -11,12 +11,14 @@ pub use engine_ecs as ecs;
 pub use engine_platform as platform;
 pub use frames::BenchmarkReport;
 pub use frames::RenderError;
+pub use input_actions::{ActionBinding, ActionEvent, ActionState, InputActions, InputContext};
 pub use replay::{InputRecording, ReplayError};
 pub use simulation::{FixedStep, Resources, Simulation, StepContext};
 
 mod frames;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
+mod input_actions;
 mod replay;
 pub mod scene;
 mod simulation;
@@ -25,7 +27,8 @@ use std::time::Duration;
 
 use engine_ecs::{Schedule, StageId, Tick, World};
 use engine_platform::{
-    Commands, Event, PlatformApp, PlatformError, SurfaceEvent, WindowDesc, WindowEvent, WindowId,
+    Commands, Event, InputEvent, PlatformApp, PlatformError, SurfaceEvent, WindowDesc, WindowEvent,
+    WindowId,
 };
 use frames::Frames;
 
@@ -88,6 +91,17 @@ impl App {
     /// Registers or replaces an app-wide resource.
     pub fn insert_resource<T: Send + Sync + 'static>(&mut self, value: T) -> Option<T> {
         self.simulation.context.resources_mut().insert(value)
+    }
+
+    /// Installs the game's input resolver and replaces any previous resolver.
+    /// The callback runs before resolving each physical event and can update
+    /// the context stack, update resources, or return `true` to consume the event.
+    pub fn set_input_actions<A: Copy + Eq + Send + Sync + 'static>(
+        &mut self,
+        actions: InputActions<A>,
+        intercept: impl FnMut(&InputEvent, &mut InputActions<A>, &mut Resources) -> bool + 'static,
+    ) {
+        self.simulation.set_input_actions(actions, intercept);
     }
 
     /// Registers a system in the default fixed-update stage.
@@ -277,7 +291,7 @@ impl Runner<'_> {
                 Event::Suspended => {
                     active = false;
                     redraw = false;
-                    self.simulation.discard_pending_input();
+                    self.simulation.discard_suspended_input();
                     commands.close_windows(&self.open);
                     self.open.clear();
                     if self.frames.as_ref().is_some_and(Frames::is_benchmark) {
@@ -407,6 +421,47 @@ mod tests {
             commands.drain().as_slice(),
             [Command::CreateWindow { .. }]
         ));
+    }
+
+    #[test]
+    fn suspension_keeps_the_input_cancellation_for_the_next_step() {
+        use engine_platform::{Input, InputTimestamp, MouseButton};
+
+        let mut app = App::new();
+        let mut actions = InputActions::default();
+        actions.push_context(
+            InputContext::default().bind(ActionBinding::MouseButton(MouseButton::Left), ()),
+        );
+        app.set_input_actions(actions, |_, _, _| false);
+        app.add_system(|_, _, step, _| {
+            let actions = step.actions::<()>().unwrap();
+            match step.index() {
+                1 => assert_eq!(actions.events(), [ActionEvent::Pressed(())]),
+                2 => assert_eq!(actions.events(), [ActionEvent::Released(())]),
+                _ => assert!(actions.events().is_empty()),
+            }
+        });
+        let mut runner = Runner::new(app);
+        let mut commands = Commands::default();
+        runner.update(&[Event::Resumed], &mut commands);
+        let window = runner.open[0];
+        let input = |input| InputEvent {
+            window,
+            timestamp: InputTimestamp::Received(Duration::ZERO),
+            input,
+        };
+        runner.simulation.queue_input([input(Input::MouseButton {
+            button: MouseButton::Left,
+            pressed: true,
+        })]);
+        let step = Duration::from_nanos(16_666_667);
+        assert_eq!(runner.simulation.advance(step), 1);
+        runner.update(
+            &[Event::Input(input(Input::Cancelled)), Event::Suspended],
+            &mut commands,
+        );
+        runner.update(&[Event::Resumed], &mut commands);
+        assert_eq!(runner.simulation.advance(step), 1);
     }
 
     #[test]

@@ -72,6 +72,8 @@ pub enum Input {
         /// Vertical position in physical window pixels.
         y: f64,
     },
+    /// The window lost focus or its input session ended. Clear held sources.
+    Cancelled,
 }
 
 /// A keyboard position rather than a layout-dependent character.
