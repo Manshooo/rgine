@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::SourceFiles;
+
 const IDENTIFIER: &[u8; 12] = b"\xabKTX 20\xbb\r\n\x1a\n";
 const HEADER_SIZE: usize = 80;
 const LEVEL_ENTRY_SIZE: usize = 24;
@@ -33,8 +35,17 @@ impl Texture {
     /// Read an uncompressed linear or sRGB RGBA8 KTX2 file.
     /// Invalid or unsupported data is reported with the source path.
     pub fn load(path: &Path) -> io::Result<Self> {
-        let bytes = fs::read(path)
-            .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
+        Self::load_from(path, |file| fs::read(file))
+    }
+
+    /// Loads a texture and records its input for development reload.
+    pub fn load_tracked(path: &Path, files: &mut SourceFiles) -> io::Result<Self> {
+        Self::load_from(path, |file| files.read(file))
+    }
+
+    fn load_from(path: &Path, read: impl FnOnce(&Path) -> io::Result<Vec<u8>>) -> io::Result<Self> {
+        let bytes =
+            read(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
         let (size, color_space, levels) = parse(&bytes).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,

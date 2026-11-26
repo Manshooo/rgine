@@ -39,6 +39,19 @@ jobs:
       - name: Report warm glTF re-import time
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p engine-asset --locked --test gltf_prop measures_warm_reimport_of_ten_thousand_triangles -- --exact --nocapture
+      - name: Measure disk edits to the visible hot-reload frame
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          WGPU_BACKEND: vulkan
+          RGINE_FORCE_CLASSIC: '1'
+        run: |
+          if ! command -v xvfb-run || ! command -v xauth || ! compgen -G '/usr/share/vulkan/icd.d/lvp*.json' >/dev/null ||
+            ! ldconfig -p | grep -F 'libxkbcommon-x11.so.0' >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb xauth mesa-vulkan-drivers libxkbcommon-x11-0
+          fi
+          cargo build -p engine-app --locked --features hot-reload --example hot_reload
+          xvfb-run -a -s '-screen 0 320x240x24' python3 .github/scripts/check-hot-reload.py target/debug/examples/hot_reload
       - name: Report shader variants and check the budget
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p engine-render --locked --lib shaders::tests::reports_shader_variants -- --exact --nocapture

@@ -1,5 +1,5 @@
 use engine_asset::{
-    ImportCache,
+    ImportCache, SourceFiles,
     gltf_prop::{self, Prop},
 };
 use std::{
@@ -35,6 +35,29 @@ fn marker_hierarchy_material_and_warm_reimport() {
         Prop::load(&changed).unwrap().meshes[0][0].positions[0][0],
         -0.5
     );
+}
+
+#[test]
+fn tracked_import_retries_when_a_missing_external_buffer_appears() {
+    let root = tempfile::tempdir().unwrap();
+    let model = root.path().join("marker.gltf");
+    let buffer = root.path().join("marker.bin");
+    fs::write(&model, include_bytes!("fixtures/marker.gltf")).unwrap();
+    let cache = ImportCache::new(root.path().join("cache"));
+    let mut files = SourceFiles::default();
+    assert!(gltf_prop::import_tracked(&model, &cache, &Default::default(), &mut files).is_err());
+    assert!(!files.changed());
+
+    let mut bytes = *include_bytes!("fixtures/marker.bin");
+    fs::write(&buffer, bytes).unwrap();
+    assert!(files.changed());
+    let mut files = SourceFiles::default();
+    gltf_prop::import_tracked(&model, &cache, &Default::default(), &mut files).unwrap();
+    assert!(!files.changed());
+
+    bytes[..4].copy_from_slice(&(-0.5_f32).to_le_bytes());
+    fs::write(&buffer, bytes).unwrap();
+    assert!(files.changed());
 }
 
 #[test]

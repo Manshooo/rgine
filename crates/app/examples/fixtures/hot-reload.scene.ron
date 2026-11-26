@@ -1,0 +1,12 @@
+(
+    schema_version: 2,
+    objects: {
+        "00000000-0000-0000-0000-000000000001": (
+            object_type: (name: "rgine.static_prop", version: 1),
+            parent: None,
+            properties: {
+                "translation": (0.0, 0.0, 0.0),
+            },
+        ),
+    },
+)

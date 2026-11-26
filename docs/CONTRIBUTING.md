@@ -217,3 +217,13 @@ engine-cli migrate ./my-project ./my-project-v2
 The command validates the manifest and authored scene and prefab files before writing a copy. A failure names the source or destination path and leaves the original project intact. The copy includes project files and asset sidecars. The checkout's root `.git` entry stays with the original.
 
 Run the command against a migrated project to verify that it is up to date. This returns success without creating a copy. See [ADR 0021](adr/0021-authored-scene-migration.md) for the supported scene versions.
+
+## Reload an authored prop during development
+
+Copy the sample scene and the glTF fixture with its external buffer to a working directory. Run the example with the paths to those copies.
+
+```sh
+cargo run --locked -p engine-app --features hot-reload --example hot_reload -- ./level.scene.ron ./marker.gltf
+```
+
+The sample scene is in [the app fixtures](../crates/app/examples/fixtures/hot-reload.scene.ron). The model and its buffer are in [the asset fixtures](../crates/asset/tests/fixtures). Edit the model, buffer or scene while the window is open. Supply a KTX2 file as the optional third argument to watch the base-color texture. [ADR 0023](adr/0023-development-asset-reload.md) describes the refresh and the CI measurement.

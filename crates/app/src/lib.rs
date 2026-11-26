@@ -15,6 +15,8 @@ pub use replay::{InputRecording, ReplayError};
 pub use simulation::{FixedStep, Resources, Simulation, StepContext};
 
 mod frames;
+#[cfg(feature = "hot-reload")]
+pub mod hot_reload;
 mod replay;
 pub mod scene;
 mod simulation;
@@ -134,7 +136,8 @@ impl App {
 
     /// Runs the windowed app and presents a linear RGBA clear color on redraw.
     pub fn run_rendered(self, clear_color: [f64; 4]) -> Result<(), RenderError> {
-        self.run_with_frames(Frames::new(clear_color)).map(drop)
+        self.run_with_frames(Frames::new(clear_color), None)
+            .map(drop)
     }
 
     /// Renders scene components extracted from the world after each fixed update.
@@ -145,7 +148,21 @@ impl App {
         clear_color: [f64; 4],
     ) -> Result<(), RenderError> {
         let frames = self.scene_frames(meshes, clear_color);
-        self.run_with_frames(frames).map(drop)
+        self.run_with_frames(frames, None).map(drop)
+    }
+
+    /// Runs a scene with a development refresh between simulation and extraction.
+    /// The callback returns whether it committed a world or mesh registry update.
+    #[cfg(feature = "hot-reload")]
+    pub fn run_scene_with_refresh(
+        self,
+        meshes: scene::MeshRegistry,
+        clear_color: [f64; 4],
+        refresh: impl FnMut(&mut World, &mut scene::MeshRegistry) -> bool,
+    ) -> Result<(), RenderError> {
+        let frames = self.scene_frames(meshes, clear_color);
+        self.run_with_frames(frames, Some(Box::new(refresh)))
+            .map(drop)
     }
 
     /// Measures the Render v1 camera pass in a 1280 × 720 window using DX12 and classic bindings.
@@ -160,7 +177,7 @@ impl App {
         let frames = self
             .scene_frames(meshes, clear_color)
             .with_benchmark(expected_adapter);
-        self.run_with_frames(frames)?.finish_benchmark()
+        self.run_with_frames(frames, None)?.finish_benchmark()
     }
 
     fn scene_frames(&self, meshes: scene::MeshRegistry, clear_color: [f64; 4]) -> Frames {
@@ -174,9 +191,14 @@ impl App {
         )
     }
 
-    fn run_with_frames(self, frames: Frames) -> Result<Frames, RenderError> {
+    fn run_with_frames(
+        self,
+        frames: Frames,
+        refresh: Option<Box<SceneRefresh<'_>>>,
+    ) -> Result<Frames, RenderError> {
         let mut runner = Runner::new(self);
         runner.frames = Some(frames);
+        runner.refresh = refresh;
         engine_platform::run(&mut runner).map_err(RenderError::Platform)?;
         match runner.render_failure {
             Some(error) => Err(error),
@@ -200,21 +222,25 @@ impl App {
 }
 
 /// Loop policy: one window, opened when the platform is ready, closed with it.
-struct Runner {
+type SceneRefresh<'a> = dyn FnMut(&mut World, &mut scene::MeshRegistry) -> bool + 'a;
+
+struct Runner<'a> {
     window: WindowDesc,
     open: Vec<WindowId>,
     simulation: Simulation,
     frames: Option<Frames>,
+    refresh: Option<Box<SceneRefresh<'a>>>,
     render_failure: Option<RenderError>,
 }
 
-impl Runner {
+impl Runner<'_> {
     fn new(app: App) -> Self {
         Self {
             window: app.window,
             open: Vec::new(),
             simulation: app.simulation,
             frames: None,
+            refresh: None,
             render_failure: None,
         }
     }
@@ -272,8 +298,11 @@ impl Runner {
         let Some(frames) = &mut self.frames else {
             return;
         };
+        let refreshed = self.refresh.as_mut().is_some_and(|refresh| {
+            frames.refresh_scene(self.simulation.world_mut(), &mut **refresh)
+        });
         let changed = !frames.is_benchmark()
-            && steps > 0
+            && (steps > 0 || refreshed)
             && frames.extract_for_redraw(self.simulation.world());
         if redraw || frames.benchmark_interrupted() {
             if let Err(error) = frames.draw(&self.open, commands) {
@@ -288,7 +317,7 @@ impl Runner {
     }
 }
 
-impl PlatformApp for &mut Runner {
+impl PlatformApp for &mut Runner<'_> {
     fn update(&mut self, events: &[Event], commands: &mut Commands) {
         Runner::update(self, events, commands);
     }
@@ -317,7 +346,7 @@ mod tests {
         Event::Window { window, event }
     }
 
-    fn runner() -> Runner {
+    fn runner() -> Runner<'static> {
         Runner::new(App::new().with_window(WindowDesc::new("test")))
     }
 

@@ -9,7 +9,7 @@ use base64::Engine;
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::{ImportCache, ImportSettings};
+use crate::{ImportCache, ImportSettings, SourceFiles};
 
 /// Geometry and PBR factors for a primitive in its node's local space.
 #[derive(Serialize, Deserialize)]
@@ -52,7 +52,26 @@ fn invalid(message: impl ToString) -> io::Error {
 /// External buffers are relative to the model. Embedded binary and base64 buffers
 /// are also supported. Textured materials require the texture import pipeline.
 pub fn import(path: &Path, cache: &ImportCache, settings: &ImportSettings) -> io::Result<PathBuf> {
-    let source = fs::read(path)?;
+    import_from(path, cache, settings, |file| fs::read(file))
+}
+
+/// Imports a prop and records its source and external buffers for development reload.
+pub fn import_tracked(
+    path: &Path,
+    cache: &ImportCache,
+    settings: &ImportSettings,
+    files: &mut SourceFiles,
+) -> io::Result<PathBuf> {
+    import_from(path, cache, settings, |file| files.read(file))
+}
+
+fn import_from(
+    path: &Path,
+    cache: &ImportCache,
+    settings: &ImportSettings,
+    mut read: impl FnMut(&Path) -> io::Result<Vec<u8>>,
+) -> io::Result<PathBuf> {
+    let source = read(path)?;
     let model = gltf::Gltf::from_slice(&source).map_err(invalid)?;
     let mut buffers = Vec::new();
     for buffer in model.buffers() {
@@ -80,7 +99,7 @@ pub fn import(path: &Path, cache: &ImportCache, settings: &ImportSettings) -> io
                     return Err(invalid(format!("unsupported external buffer URI: {uri}")));
                 }
                 let file = path.with_file_name(relative.as_ref());
-                fs::read(&file)
+                read(&file)
                     .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", file.display())))?
             }
         };

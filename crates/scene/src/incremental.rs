@@ -70,20 +70,16 @@ struct PlannedNode<'a, T> {
 /// The compiler owns the identity and parent edge of each authored entity.
 /// Runtime systems can keep independent components on those entities.
 pub struct IncrementalScene<'registry> {
-    registry: &'registry TypeRegistry,
     world: World,
-    nodes: BTreeMap<ObjectId, LiveNode>,
-    owners: BTreeMap<Entity, ObjectId>,
+    compiler: SceneCompiler<'registry>,
 }
 
 impl<'registry> IncrementalScene<'registry> {
     /// Creates an empty development world using the given authoring registry.
     pub fn new(registry: &'registry TypeRegistry) -> Self {
         Self {
-            registry,
             world: World::new(),
-            nodes: BTreeMap::new(),
-            owners: BTreeMap::new(),
+            compiler: SceneCompiler::new(registry),
         }
     }
 
@@ -100,16 +96,57 @@ impl<'registry> IncrementalScene<'registry> {
 
     /// Finds the live entity for an authored object.
     pub fn entity(&self, object: ObjectId) -> Option<Entity> {
-        let entity = self.nodes.get(&object)?.entity;
-        self.world.contains(entity).then_some(entity)
+        self.compiler.entity(&self.world, object)
     }
 
     /// Finds the authored ID for a live entity owned by this scene.
     pub fn object(&self, entity: Entity) -> Option<ObjectId> {
+        self.compiler.object(&self.world, entity)
+    }
+
+    /// Applies a snapshot to this world using the incremental compiler.
+    pub fn update<T, L, S>(
+        &mut self,
+        truth: &Truth<'registry>,
+        lower: impl FnMut(ObjectId, &TruthObject, &SceneReferences<'_>) -> Result<T, L>,
+        prepare: impl FnMut(&mut SceneEntityCommands<'_>, &T, &SceneEntities<'_>) -> Result<(), S>,
+    ) -> Result<(), SceneUpdateError<L, S>> {
+        self.compiler.update(&mut self.world, truth, lower, prepare)
+    }
+}
+
+/// Reconciles Truth snapshots in a caller-owned development world.
+///
+/// Use one compiler with the same world for the lifetime of its scene. The
+/// compiler manages that scene's entity lifetimes and parent edges.
+pub struct SceneCompiler<'registry> {
+    registry: &'registry TypeRegistry,
+    nodes: BTreeMap<ObjectId, LiveNode>,
+    owners: BTreeMap<Entity, ObjectId>,
+}
+
+impl<'registry> SceneCompiler<'registry> {
+    /// Creates an empty compiler using the given authoring registry.
+    pub fn new(registry: &'registry TypeRegistry) -> Self {
+        Self {
+            registry,
+            nodes: BTreeMap::new(),
+            owners: BTreeMap::new(),
+        }
+    }
+
+    /// Finds the live entity for an authored object in the paired world.
+    pub fn entity(&self, world: &World, object: ObjectId) -> Option<Entity> {
+        let entity = self.nodes.get(&object)?.entity;
+        world.contains(entity).then_some(entity)
+    }
+
+    /// Finds the authored ID for a live entity owned by this scene.
+    pub fn object(&self, world: &World, entity: Entity) -> Option<ObjectId> {
         self.owners
             .get(&entity)
             .copied()
-            .filter(|_| self.world.contains(entity))
+            .filter(|_| world.contains(entity))
     }
 
     /// Applies a snapshot while retaining every surviving object's entity handle.
@@ -120,6 +157,7 @@ impl<'registry> IncrementalScene<'registry> {
     /// errors leave the previous scene active.
     pub fn update<T, L, S>(
         &mut self,
+        world: &mut World,
         truth: &Truth<'registry>,
         mut lower: impl FnMut(ObjectId, &TruthObject, &SceneReferences<'_>) -> Result<T, L>,
         mut prepare: impl FnMut(&mut SceneEntityCommands<'_>, &T, &SceneEntities<'_>) -> Result<(), S>,
@@ -127,7 +165,7 @@ impl<'registry> IncrementalScene<'registry> {
         if !ptr::eq(self.registry, truth.registry()) {
             return Err(SceneUpdateError::RegistryMismatch);
         }
-        if let Some(object) = self.changed_runtime_object() {
+        if let Some(object) = self.changed_runtime_object(world) {
             return Err(SceneUpdateError::WorldChanged(object));
         }
         let indices = scene_indices(truth)?;
@@ -165,7 +203,7 @@ impl<'registry> IncrementalScene<'registry> {
             .map(|id| {
                 self.nodes.get(id).map_or_else(
                     || {
-                        let entity = self.world.spawn_empty();
+                        let entity = world.spawn_empty();
                         spawned.push(entity);
                         entity
                     },
@@ -187,7 +225,7 @@ impl<'registry> IncrementalScene<'registry> {
             };
             if let Err(source) = prepare(&mut edit, &node.data, &references) {
                 for entity in spawned {
-                    self.world.despawn(entity);
+                    world.despawn(entity);
                 }
                 return Err(SceneUpdateError::Prepare {
                     object: node.id,
@@ -196,7 +234,7 @@ impl<'registry> IncrementalScene<'registry> {
             }
         }
 
-        self.world.advance_tick();
+        world.advance_tick();
         // Detach all changed edges before attaching the new ones. Both snapshots
         // can be acyclic even when a one-edge-at-a-time transition would form a cycle.
         for node in &plan {
@@ -204,7 +242,7 @@ impl<'registry> IncrementalScene<'registry> {
                 .old_parent(node.id)
                 .filter(|&old| Some(old) != node.authored.parent())
             {
-                self.world.remove_relation::<ChildOf>(
+                world.remove_relation::<ChildOf>(
                     entity_for(node.id),
                     self.nodes[&old_parent].entity,
                 );
@@ -216,7 +254,7 @@ impl<'registry> IncrementalScene<'registry> {
                 .parent()
                 .filter(|&parent| Some(parent) != self.old_parent(node.id))
             {
-                self.world
+                world
                     .add_relation::<ChildOf>(entity_for(node.id), entity_for(parent))
                     .expect("validated snapshots form a scene hierarchy");
             }
@@ -228,9 +266,9 @@ impl<'registry> IncrementalScene<'registry> {
                 .expect("removed node belongs to previous snapshot")
                 .entity;
             self.owners.remove(&entity);
-            self.world.despawn(entity);
+            world.despawn(entity);
         }
-        commands.apply(&mut self.world);
+        commands.apply(world);
         for node in plan {
             let entity = entity_for(node.id);
             self.owners.insert(entity, node.id);
@@ -246,14 +284,14 @@ impl<'registry> IncrementalScene<'registry> {
         Ok(())
     }
 
-    fn changed_runtime_object(&self) -> Option<ObjectId> {
+    fn changed_runtime_object(&self, world: &World) -> Option<ObjectId> {
         self.nodes.iter().find_map(|(&id, node)| {
             let expected_parent = node
                 .authored
                 .parent()
                 .map(|parent| self.nodes[&parent].entity);
-            (!self.world.contains(node.entity)
-                || self.world.relation_targets::<ChildOf>(node.entity).next() != expected_parent)
+            (!world.contains(node.entity)
+                || world.relation_targets::<ChildOf>(node.entity).next() != expected_parent)
                 .then_some(id)
         })
     }

@@ -15,7 +15,7 @@ pub use compiler::AuthoringTrace;
 #[cfg(feature = "authoring")]
 pub use compiler::{CompileError, SceneCompilation, SceneReferences};
 #[cfg(feature = "authoring")]
-pub use incremental::{IncrementalScene, SceneEntityCommands, SceneUpdateError};
+pub use incremental::{IncrementalScene, SceneCompiler, SceneEntityCommands, SceneUpdateError};
 #[cfg(feature = "authoring")]
 pub use truth::{
     Change, JournalEntry, ObjectId, PrefabError, PrefabInstance, PropertyValue, SceneError,
