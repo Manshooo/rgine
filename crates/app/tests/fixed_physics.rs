@@ -6,8 +6,8 @@ use std::time::Duration;
 use engine_app::core::glam::{Quat, Vec3};
 use engine_app::ecs::Entity;
 use engine_app::physics::{
-    BodyKind, Collider, ColliderShape, ContactEvent, PhysicsPlugin, PhysicsPose, PhysicsWorld,
-    RigidBody,
+    BodyKind, Collider, ColliderShape, ContactEvent, KinematicMotion, PhysicsPlugin, PhysicsPose,
+    PhysicsWorld, RigidBody,
 };
 use engine_app::{App, FixedStep};
 
@@ -227,5 +227,76 @@ fn physics_applies_commands_replacements_and_despawns_at_fixed_boundaries() {
             .unwrap()
             .contacts(),
         [contact(replacement, ball, false, false)]
+    );
+}
+
+#[test]
+fn kinematic_move_sees_walls_added_and_removed_before_its_step() {
+    let mut app = app().add_plugin(PhysicsPlugin::default());
+    let world = app.world_mut();
+    let wall = world.spawn_empty();
+    let sensor = world.spawn_empty();
+    let wall_pose = PhysicsPose {
+        translation: Vec3::X,
+        ..PhysicsPose::default()
+    };
+    let wall_shape = ColliderShape::Cuboid(Vec3::new(0.1, 1.0, 1.0));
+    world
+        .insert(sensor, Collider::new(wall_shape, wall_pose, true))
+        .unwrap();
+    let pawn = world.spawn_empty();
+    world
+        .insert(
+            pawn,
+            RigidBody::new(BodyKind::Kinematic, PhysicsPose::default()),
+        )
+        .unwrap();
+    world.insert(pawn, sphere()).unwrap();
+    world.insert(pawn, KinematicMotion::default()).unwrap();
+    app.add_system(move |world, commands, step, _| {
+        if step.index() == 1 {
+            commands.insert(wall, Collider::new(wall_shape, wall_pose, false));
+        }
+        if step.index() <= 2 {
+            world
+                .query::<&mut KinematicMotion>()
+                .get_mut(pawn)
+                .unwrap()
+                .request_translation(Vec3::X * 2.0);
+        }
+    });
+
+    let mut simulation = app.into_simulation();
+    simulation.advance(STEP);
+    let stopped = simulation
+        .world()
+        .get::<PhysicsPose>(pawn)
+        .unwrap()
+        .translation
+        .x;
+    assert!((0.35..0.41).contains(&stopped), "stopped at {stopped}");
+
+    simulation.world_mut().remove::<Collider>(wall).unwrap();
+    simulation.advance(STEP);
+    let passed = simulation
+        .world()
+        .get::<PhysicsPose>(pawn)
+        .unwrap()
+        .translation
+        .x;
+    assert!((passed - stopped - 2.0).abs() < 0.001);
+
+    simulation.advance(STEP);
+    let world = simulation.world();
+    assert_eq!(
+        world.get::<PhysicsPose>(pawn).unwrap().translation.x,
+        passed
+    );
+    assert!(
+        world
+            .get::<KinematicMotion>(pawn)
+            .unwrap()
+            .result()
+            .is_none()
     );
 }

@@ -1,7 +1,8 @@
 //! Optional integration of 3D physics with the app's fixed schedule.
 
 pub use engine_physics::{
-    BodyKind, Collider, ColliderShape, ContactEvent, PhysicsPose, PhysicsWorld, RigidBody,
+    BodyKind, Collider, ColliderShape, ContactEvent, KinematicMotion, KinematicMove, PhysicsPose,
+    PhysicsWorld, RigidBody,
 };
 
 use engine_core::glam::Vec3;

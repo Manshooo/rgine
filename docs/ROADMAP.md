@@ -59,13 +59,15 @@ GUID, .meta, import cache, glTF, KTX2, RON, migrations, prefabs, hot reload.
 
 The [Phase 3 acceptance report](phase-3-exit.md) records the local scenario, reload times and scripting review.
 
-## Phase 4. Physics + 3D Platformer
-Rapier adapter, character controller, interpolation, checkpoints, coins, mobile controls, game UI.
+## Phase 4. Physics + Game UI
+Rapier adapter, game-owned movement, interpolation, checkpoints, collectibles, mobile controls, game UI.
 
 - data-driven behaviour: configs, curves, state machines and tuning values in RON with hot reload. This is the deliverable, not a script API;
 - no scripting layer and no visual scripting (ADR 0007). Reassess against the trigger conditions recorded there at the end of Phase 3.
 
-**Exit**: playable prototype on desktop + Android with a live coin counter and a pause menu. Gameplay data, UI layouts and styles can be reloaded without rebuilding or restarting the game.
+**Exit**: a running fixture on desktop and Android verifies fixed-step gameplay, mobile input, a live collectible counter and a pause menu. Gameplay data, UI layouts and styles can be reloaded without rebuilding or restarting the fixture.
+
+Signal Run remains rgine's platformer proof of concept. After Phase 4, build an example game in a different genre using the completed engine features. The example can live in `examples/`.
 
 ### Game UI
 

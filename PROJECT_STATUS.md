@@ -1,6 +1,6 @@
 # Project status
 **Date**: 2026-11-26
-**Milestone**: 4 - Physics + 3D Platformer
+**Milestone**: 4 - Physics + Game UI
 **Version**: 0.1.0-dev
 
 ## Phase 0 exit
@@ -58,7 +58,7 @@ The [acceptance report](docs/phase-3-exit.md) records the save and load round-tr
 
 ## Next
 
-[Phase 4](https://github.com/Manshooo/rgine/milestone/5) starts with [input actions](https://github.com/Manshooo/rgine/issues/68), [fixed-step physics](https://github.com/Manshooo/rgine/issues/85) and [XML widget trees](https://github.com/Manshooo/rgine/issues/88). Input and physics unblock character movement. The widget tree unblocks CSS and layout. The phase ends with the same playable level verified on desktop and Android.
+[Phase 4](https://github.com/Manshooo/rgine/milestone/5) starts with [input actions](https://github.com/Manshooo/rgine/issues/68), [fixed-step physics](https://github.com/Manshooo/rgine/issues/85) and [XML widget trees](https://github.com/Manshooo/rgine/issues/88). Input and physics unblock game-owned movement. The widget tree unblocks CSS and layout. The phase verifies gameplay, input and UI on desktop and Android. A separate game can demonstrate these features after the phase.
 
 ## Deferred
 - [ ] CI checks the incremental gameplay build budget. The remaining iteration budgets need editor and asset workflows before CI can measure them.
