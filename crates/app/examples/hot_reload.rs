@@ -1,4 +1,4 @@
-//! Edit the RON scene or the glTF source files while the game fixture is running.
+//! Edit the RON scene, glTF source files or WGSL while the game fixture is running.
 
 use std::path::PathBuf;
 
@@ -12,19 +12,34 @@ use engine_app::{
 use engine_asset::ImportCache;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    const USAGE: &str =
+        "usage: hot_reload <scene.ron> <model.gltf> [base-color.ktx2] [--shaders <directory>]";
     let mut arguments = std::env::args_os().skip(1);
     let scene = arguments.next().map(PathBuf::from);
     let model = arguments.next().map(PathBuf::from);
     let (Some(scene), Some(model)) = (scene, model) else {
-        return Err("usage: hot_reload <scene.ron> <model.gltf> [base-color.ktx2]".into());
+        return Err(USAGE.into());
     };
-    let texture = arguments.next().map(PathBuf::from);
+    let mut texture = None;
+    let mut shaders = None;
+    while let Some(argument) = arguments.next() {
+        if argument == "--shaders" && shaders.is_none() {
+            shaders = Some(PathBuf::from(arguments.next().ok_or(USAGE)?));
+        } else if texture.is_none() && !argument.to_string_lossy().starts_with("--") {
+            texture = Some(PathBuf::from(argument));
+        } else {
+            return Err(USAGE.into());
+        }
+    }
     let mut registry = TypeRegistry::default();
     register_prop_nodes(&mut registry);
     let cache = ImportCache::new(std::env::temp_dir().join("rgine-import-cache"));
     let mut loader = PropScene::new(&registry, scene, model, texture, cache);
 
     let mut app = App::new().with_window(WindowDesc::new("rgine - hot reload").with_size(320, 240));
+    if let Some(directory) = shaders {
+        app = app.with_scene_shader_directory(directory);
+    }
     let world = app.world_mut();
     let camera = world.spawn_empty();
     world.insert(camera, Camera::default()).unwrap();

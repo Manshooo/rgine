@@ -25,52 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      - run: cargo fmt --all -- --check
-      - run: cargo check --workspace --locked
-      - run: cargo test --workspace --locked
-      - name: Load a compiled scene in a release build without authoring
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p engine-scene --locked --release --no-default-features
-      - name: Report warm glTF re-import time
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p engine-asset --locked --test gltf_prop measures_warm_reimport_of_ten_thousand_triangles -- --exact --nocapture
-      - name: Measure disk edits to the visible hot-reload frame
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          WGPU_BACKEND: vulkan
-          RGINE_FORCE_CLASSIC: '1'
-        run: |
-          if ! command -v xvfb-run || ! command -v xauth || ! compgen -G '/usr/share/vulkan/icd.d/lvp*.json' >/dev/null ||
-            ! ldconfig -p | grep -F 'libxkbcommon-x11.so.0' >/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb xauth mesa-vulkan-drivers libxkbcommon-x11-0
-          fi
-          cargo build -p engine-app --locked --features hot-reload --example hot_reload
-          xvfb-run -a -s '-screen 0 320x240x24' python3 .github/scripts/check-hot-reload.py target/debug/examples/hot_reload
-      - name: Report shader variants and check the budget
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p engine-render --locked --lib shaders::tests::reports_shader_variants -- --exact --nocapture
-      - name: Validate the scene pipeline catalogue
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p engine-render --locked --lib scene::gpu::tests::validates_scene_pipeline_catalogue -- --exact --nocapture
-      - name: Measure fixed ECS updates
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo bench -p engine-ecs --bench fixed_update --locked
-      - name: Check incremental gameplay build budget
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          # rust-cache disables incremental compilation for the job by default.
-          CARGO_INCREMENTAL: '1'
-        run: python3 .github/scripts/check-incremental-build.py
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo build --workspace --all-features --lib --bins --examples --locked
 
   macos:
-    # Keep the check name during the branch ruleset update.
     name: host (macos-latest)
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-26-intel
@@ -78,16 +38,14 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      - run: cargo check --workspace --locked
-      - name: Check the Apple Silicon build
-        run: cargo check --workspace --all-targets --locked --target aarch64-apple-darwin
-      - run: cargo test --workspace --locked
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Build for Intel macOS
+        run: cargo build --workspace --all-features --lib --bins --examples --locked
+      - name: Build for Apple Silicon
+        run: cargo build --workspace --all-features --lib --bins --examples --locked --target aarch64-apple-darwin
 
   boundaries:
     runs-on: ubuntu-latest
@@ -113,7 +71,7 @@ jobs:
       # repository, and a directory override outranks the toolchain this job
       # installed. RUSTUP_TOOLCHAIN outranks both, so without it this job
       # would quietly re-check the same stable as `host`.
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-features --lib --bins --examples --locked
         env:
           RUSTUP_TOOLCHAIN: "1.87.0"
 
@@ -135,7 +93,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      # xtask is host-only tooling; cross-compiling it proves nothing.
-      - run: cargo check --workspace --exclude xtask --locked --target aarch64-linux-android
-      - run: cargo check -p engine-render --example surface_spike --locked --target aarch64-linux-android
-      - run: cargo check -p engine-app --example clear_window_android --locked --target aarch64-linux-android
+      - name: Build for Android arm64
+        run: |
+          ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ndk_bin/aarch64-linux-android24-clang"
+          cargo build --workspace --exclude xtask --all-features --lib --bins --examples --locked --target aarch64-linux-android

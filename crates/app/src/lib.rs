@@ -42,6 +42,8 @@ pub struct App {
     directional_light: scene::DirectionalLight,
     hemisphere_light: scene::HemisphereLight,
     skybox_enabled: bool,
+    #[cfg(feature = "hot-reload")]
+    shader_directory: Option<std::path::PathBuf>,
 }
 
 impl Default for App {
@@ -55,6 +57,8 @@ impl Default for App {
             directional_light: scene::DirectionalLight::default(),
             hemisphere_light: scene::HemisphereLight::default(),
             skybox_enabled: false,
+            #[cfg(feature = "hot-reload")]
+            shader_directory: None,
         }
     }
 }
@@ -129,6 +133,13 @@ impl App {
         self
     }
 
+    /// Watches the WGSL files in a development shader directory.
+    #[cfg(feature = "hot-reload")]
+    pub fn with_scene_shader_directory(mut self, directory: std::path::PathBuf) -> Self {
+        self.shader_directory = Some(directory);
+        self
+    }
+
     /// Runs the application until its window is closed.
     pub fn run(self) -> Result<(), PlatformError> {
         engine_platform::run(&mut Runner::new(self))
@@ -181,14 +192,17 @@ impl App {
     }
 
     fn scene_frames(&self, meshes: scene::MeshRegistry, clear_color: [f64; 4]) -> Frames {
-        Frames::with_scene(
+        let frames = Frames::with_scene(
             clear_color,
             meshes,
             self.simulation.world(),
             self.directional_light,
             self.hemisphere_light,
             self.skybox_enabled,
-        )
+        );
+        #[cfg(feature = "hot-reload")]
+        let frames = frames.with_shader_directory(self.shader_directory.clone());
+        frames
     }
 
     fn run_with_frames(
@@ -304,6 +318,8 @@ impl Runner<'_> {
         let changed = !frames.is_benchmark()
             && (steps > 0 || refreshed)
             && frames.extract_for_redraw(self.simulation.world());
+        #[cfg(feature = "hot-reload")]
+        let changed = frames.poll_scene_shaders() || changed;
         if redraw || frames.benchmark_interrupted() {
             if let Err(error) = frames.draw(&self.open, commands) {
                 if self.render_failure.is_none() {

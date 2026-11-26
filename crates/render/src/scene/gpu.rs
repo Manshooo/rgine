@@ -17,7 +17,7 @@ use crate::resources::{
     SamplerFilter, SamplerHandle, TextureDescriptor, TextureFormat, TextureHandle, UniformBinding,
     UniformGroupHandle, checked_gpu,
 };
-use crate::shaders::ShaderVariantKey;
+use crate::shaders::{SceneShaderSources, ShaderVariantKey};
 
 mod shadows;
 mod skybox;
@@ -102,9 +102,10 @@ impl ScenePipelineKey {
 
 #[derive(Default)]
 struct ScenePipelines {
-    // Each successful factory call adds a key retained for the device lifetime.
     entries: HashMap<ScenePipelineKey, wgpu::RenderPipeline>,
+    created: usize,
     shadow_layout: Option<wgpu::BindGroupLayout>,
+    sources: SceneShaderSources,
 }
 
 impl ScenePipelines {
@@ -121,33 +122,17 @@ impl ScenePipelines {
         }
         let start = Instant::now();
         let before = self.entries.len();
-        let device = table.device.clone();
-        let uniforms = table.uniform_layout(1)?.clone();
         if self.shadow_layout.is_none() {
-            self.shadow_layout = Some(shadows::lookup_layout(&device)?);
+            self.shadow_layout = Some(shadows::lookup_layout(&table.device)?);
         }
         let shadow = self.shadow_layout.as_ref().expect("shadow layout prepared");
         for key in keys() {
             let Entry::Vacant(entry) = self.entries.entry(key) else {
                 continue;
             };
-            let pipeline = if let ShaderVariantKey::Primitive(mode) = key.shader {
-                let sampled = match mode {
-                    BindingMode::Classic => table.sampled_layout(
-                        TextureDescriptor::sampled_rgba8([1, 1]).view,
-                        wgpu::SamplerBindingType::Filtering,
-                    )?,
-                    BindingMode::Bindless => table.bindless_layout()?,
-                };
-                create_pipeline(
-                    &device,
-                    key,
-                    &[Some(&uniforms), Some(sampled), Some(shadow)],
-                )?
-            } else {
-                create_pipeline(&device, key, &[Some(&uniforms)])?
-            };
+            let pipeline = build_scene_pipeline(table, key, shadow, &self.sources)?;
             entry.insert(pipeline);
+            self.created += 1;
             tracing::debug!(?key, "scene pipeline created");
         }
         tracing::info!(
@@ -159,6 +144,64 @@ impl ScenePipelines {
             "scene pipelines prepared"
         );
         Ok(())
+    }
+
+    #[cfg(feature = "shader-reload")]
+    fn reload(
+        &mut self,
+        table: &mut ResourceTable,
+        sources: &SceneShaderSources,
+    ) -> Result<bool, RenderError> {
+        let mut replacements = Vec::new();
+        let shadow = self
+            .shadow_layout
+            .as_ref()
+            .expect("scene pipelines prepared before reload");
+        for &key in self.entries.keys() {
+            if key.shader.changed(&self.sources, sources) {
+                let pipeline =
+                    build_scene_pipeline(table, key, shadow, sources).map_err(|error| {
+                        let files = sources
+                            .changed_files(&self.sources)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        RenderError(format!("{files}: {error}"))
+                    })?;
+                replacements.push((key, pipeline));
+            }
+        }
+        let changed = !replacements.is_empty();
+        self.created += replacements.len();
+        self.entries.extend(replacements);
+        self.sources = sources.clone();
+        Ok(changed)
+    }
+}
+
+fn build_scene_pipeline(
+    table: &mut ResourceTable,
+    key: ScenePipelineKey,
+    shadow: &wgpu::BindGroupLayout,
+    sources: &SceneShaderSources,
+) -> Result<wgpu::RenderPipeline, RenderError> {
+    let device = table.device.clone();
+    let uniforms = table.uniform_layout(1)?.clone();
+    if let ShaderVariantKey::Primitive(mode) = key.shader {
+        let sampled = match mode {
+            BindingMode::Classic => table.sampled_layout(
+                TextureDescriptor::sampled_rgba8([1, 1]).view,
+                wgpu::SamplerBindingType::Filtering,
+            )?,
+            BindingMode::Bindless => table.bindless_layout()?,
+        };
+        create_pipeline(
+            &device,
+            key,
+            &[Some(&uniforms), Some(sampled), Some(shadow)],
+            sources,
+        )
+    } else {
+        create_pipeline(&device, key, &[Some(&uniforms)], sources)
     }
 }
 
@@ -178,6 +221,15 @@ pub(crate) struct SceneRenderer {
 }
 
 impl SceneRenderer {
+    #[cfg(feature = "shader-reload")]
+    pub(crate) fn reload_shaders(
+        &mut self,
+        table: &mut ResourceTable,
+        sources: &SceneShaderSources,
+    ) -> Result<bool, RenderError> {
+        self.pipelines.reload(table, sources)
+    }
+
     pub(crate) fn pipeline_keys(&self) -> Vec<String> {
         let mut keys: Vec<_> = self
             .pipelines
@@ -198,7 +250,7 @@ impl SceneRenderer {
     }
 
     pub(crate) fn pipeline_creations(&self) -> usize {
-        self.pipelines.entries.len()
+        self.pipelines.created
     }
 
     pub(crate) fn prepare(
@@ -853,10 +905,11 @@ fn create_pipeline(
     device: &wgpu::Device,
     key: ScenePipelineKey,
     bind_group_layouts: &[Option<&wgpu::BindGroupLayout>],
+    sources: &SceneShaderSources,
 ) -> Result<wgpu::RenderPipeline, RenderError> {
     let source = key
         .shader
-        .wgsl()
+        .wgsl(sources)
         .ok_or_else(|| RenderError(format!("shader variant {:?} is not registered", key.shader)))?;
     let (label, mesh) = match key.shader {
         ShaderVariantKey::Primitive(_) => (
@@ -891,11 +944,14 @@ fn create_pipeline(
         blend: None,
         write_mask: wgpu::ColorWrites::ALL,
     })];
-    checked_gpu(device, || {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let shader = checked_gpu(device, || {
+        device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
+        })
+    })
+    .map_err(|error| RenderError(format!("invalid scene shader {label}: {error}")))?;
+    checked_gpu(device, || {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(label),
             bind_group_layouts,

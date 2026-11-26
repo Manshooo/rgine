@@ -11,6 +11,10 @@ use crate::scene;
 mod benchmark;
 pub use benchmark::BenchmarkReport;
 use benchmark::{Benchmark, DRAWABLE_SIZE};
+#[cfg(feature = "hot-reload")]
+mod shader_reload;
+#[cfg(feature = "hot-reload")]
+use shader_reload::ShaderReload;
 
 /// A failure from a rendered application.
 #[derive(Debug)]
@@ -65,6 +69,8 @@ pub(crate) struct Frames {
     size: [u32; 2],
     occluded: bool,
     benchmark: Option<Benchmark>,
+    #[cfg(feature = "hot-reload")]
+    shader_reload: Option<ShaderReload>,
 }
 
 impl Frames {
@@ -76,12 +82,38 @@ impl Frames {
             size: [0, 0],
             occluded: false,
             benchmark: None,
+            #[cfg(feature = "hot-reload")]
+            shader_reload: None,
         }
     }
 
     pub(crate) fn with_benchmark(mut self, expected_adapter: String) -> Self {
         self.benchmark = Some(Benchmark::new(expected_adapter));
+        #[cfg(feature = "hot-reload")]
+        {
+            self.shader_reload = None;
+        }
         self
+    }
+
+    #[cfg(feature = "hot-reload")]
+    pub(crate) fn with_shader_directory(mut self, directory: Option<std::path::PathBuf>) -> Self {
+        self.shader_reload = directory.map(ShaderReload::new);
+        self
+    }
+
+    #[cfg(feature = "hot-reload")]
+    pub(crate) fn poll_scene_shaders(&mut self) -> bool {
+        if self.occluded || self.size.contains(&0) {
+            return false;
+        }
+        if let (Some(Surface::Ready(drawable)), Some(reload)) =
+            (&mut self.surface, &mut self.shader_reload)
+        {
+            reload.poll(drawable)
+        } else {
+            false
+        }
     }
 
     pub(crate) fn is_benchmark(&self) -> bool {
@@ -229,6 +261,10 @@ impl Frames {
                 drawable
                     .prepare_scene_pipelines()
                     .map_err(RenderError::Graphics)?;
+                #[cfg(feature = "hot-reload")]
+                if let Some(reload) = &mut self.shader_reload {
+                    reload.attach(&mut drawable);
+                }
                 if let Some(benchmark) = &mut self.benchmark {
                     benchmark.prepare(&drawable, scene, startup, prepare.elapsed())?;
                 }

@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+shader-reload = []
+
 [dependencies]
 engine-asset.workspace = true
 engine-core.workspace = true

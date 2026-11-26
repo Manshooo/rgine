@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Development builds can reload scene WGSL in a running game. A shader error reports the affected source and keeps the last working pipelines.
 - Development builds can hot reload a static glTF prop, its external buffers, its optional KTX2 base color and its authored scene while the game is running.
 - Development scenes reconcile Truth snapshots incrementally, preserving live entities and rebuilding affected authored components and hierarchy edges.
 - `engine-cli migrate` validates authored project scenes and prefabs and writes a migrated project copy. Authored RON schema v2 groups each object's reflected type name and version.
