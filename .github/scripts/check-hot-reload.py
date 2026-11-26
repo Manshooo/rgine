@@ -1,4 +1,4 @@
-"""Drive disk edits and measure the first changed pixel in an Xvfb game window."""
+"""Drive disk edits and measure the first changed pixels in a game window."""
 
 import ctypes as c
 import os
@@ -20,7 +20,18 @@ BUDGET = 2.0
 SHADER_BUDGET = 1.0
 
 
-class Screen:
+def find_marker(read_pixel, channel):
+    def marker_at(x):
+        rgb = read_pixel(x)
+        value = rgb[channel]
+        return value > 48 and value > 1.5 * max(rgb[:channel] + rgb[channel + 1:])
+
+    return marker_at(160), any(marker_at(x) for x in range(225, 301, 5))
+
+
+class X11Screen:
+    name = "Xvfb"
+
     def __init__(self):
         self.x11 = c.CDLL("libX11.so.6")
         self.x11.XOpenDisplay.argtypes = [c.c_char_p]
@@ -50,15 +61,65 @@ class Screen:
         if not image:
             raise RuntimeError("could not capture the Xvfb frame")
         try:
-            def marker_at(x):
+            def read_pixel(x):
                 pixel = self.x11.XGetPixel(image, x, 0)
-                rgb = (pixel >> 16) & 255, (pixel >> 8) & 255, pixel & 255
-                value = rgb[channel]
-                return value > 48 and value > 1.5 * max(rgb[:channel] + rgb[channel + 1:])
+                return (pixel >> 16) & 255, (pixel >> 8) & 255, pixel & 255
 
-            return marker_at(160), any(marker_at(x) for x in range(225, 301, 5))
+            return find_marker(read_pixel, channel)
         finally:
             self.x11.XDestroyImage(image)
+
+
+class WindowsScreen:
+    name = "Windows desktop"
+
+    def __init__(self, pid):
+        from ctypes import wintypes as w
+
+        self.pid = pid
+        self.types = w
+        self.user = c.WinDLL("user32", use_last_error=True)
+        self.user.SetProcessDpiAwarenessContext.argtypes = [w.HANDLE]
+        self.user.SetProcessDpiAwarenessContext(w.HANDLE(-4))  # Per-monitor DPI aware v2.
+        self.user.FindWindowW.argtypes = [w.LPCWSTR, w.LPCWSTR]
+        self.user.FindWindowW.restype = w.HWND
+        self.user.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
+        self.user.GetClientRect.argtypes = [w.HWND, c.POINTER(w.RECT)]
+        self.user.ClientToScreen.argtypes = [w.HWND, c.POINTER(w.POINT)]
+        self.user.GetDC.argtypes = [w.HWND]
+        self.user.GetDC.restype = w.HDC
+        self.user.ReleaseDC.argtypes = [w.HWND, w.HDC]
+        self.gdi = c.WinDLL("gdi32", use_last_error=True)
+        self.gdi.GetPixel.argtypes = [w.HDC, c.c_int, c.c_int]
+        self.gdi.GetPixel.restype = w.DWORD
+
+    def close(self):
+        pass  # Each capture releases its desktop DC.
+
+    def marker_pixels(self, channel=0):
+        window = self.user.FindWindowW(None, "rgine - hot reload")
+        pid, bounds, origin = self.types.DWORD(), self.types.RECT(), self.types.POINT()
+        if not window or not self.user.GetWindowThreadProcessId(window, c.byref(pid)):
+            return False, False
+        if pid.value != self.pid or not self.user.GetClientRect(window, c.byref(bounds)):
+            return False, False
+        if not self.user.ClientToScreen(window, c.byref(origin)):
+            return False, False
+
+        dc = self.user.GetDC(None)
+        if not dc:
+            raise c.WinError(c.get_last_error())
+        try:
+            # Read the composited desktop. Scale fixture coordinates into the client area.
+            y = origin.y + bounds.bottom // 2
+
+            def read_pixel(x):
+                pixel = self.gdi.GetPixel(dc, origin.x + bounds.right * x // 320, y)
+                return pixel & 255, (pixel >> 8) & 255, (pixel >> 16) & 255
+
+            return find_marker(read_pixel, channel)
+        finally:
+            self.user.ReleaseDC(None, dc)
 
 
 def replace(path, contents):
@@ -140,9 +201,10 @@ def exercise_shader(process, screen, log, shader):
     if elapsed >= SHADER_BUDGET:
         raise RuntimeError(f"shader reload took {elapsed:.3f}s, budget is under {SHADER_BUDGET:.1f}s")
     runner = os.environ.get("RUNNER_NAME", "local")
-    image = os.environ.get("ImageOS", platform.system())
+    image = os.environ.get("ImageOS", platform.platform())
+    backend = os.environ.get("WGPU_BACKEND", "auto")
     print(f"Shader edit to visible frame: {elapsed * 1000:.1f} ms "
-          f"({runner}, {image}, {platform.machine()}, Vulkan/Xvfb)")
+          f"({runner}, {image}, {platform.machine()}, {backend}, {screen.name})")
 
 
 def main():
@@ -165,27 +227,27 @@ def main():
         env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime))
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("WAYLAND_SOCKET", None)
-        screen = Screen()
-        try:
-            with log.open("wb") as output:
-                process = subprocess.Popen([binary, scene, model, "--shaders", shaders], stdout=output,
-                                           stderr=subprocess.STDOUT, env=env)
-                try:
-                    exercise(process, screen, log, model_buffer, scene)
-                    exercise_shader(process, screen, log, shaders / "primitive_classic.wgsl")
-                except Exception:
-                    print(log.read_text(errors="replace"), file=sys.stderr)
-                    raise
-                finally:
-                    if process.poll() is None:
-                        process.terminate()
-                        try:
-                            process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            process.kill()
-                            process.wait()
-        finally:
-            screen.close()
+        with log.open("wb") as output:
+            process = subprocess.Popen([binary, scene, model, "--shaders", shaders], stdout=output,
+                                       stderr=subprocess.STDOUT, env=env)
+            screen = None
+            try:
+                screen = WindowsScreen(process.pid) if os.name == "nt" else X11Screen()
+                exercise(process, screen, log, model_buffer, scene)
+                exercise_shader(process, screen, log, shaders / "primitive_classic.wgsl")
+            except Exception:
+                print(log.read_text(errors="replace"), file=sys.stderr)
+                raise
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                if screen is not None:
+                    screen.close()
 
 
 if __name__ == "__main__":

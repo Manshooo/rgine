@@ -9,4 +9,4 @@ With the app's `hot-reload` feature and a shader directory configured, the game 
 
 ## Verification
 
-The [manual Linux fixture](../CONTRIBUTING.md#reload-an-authored-prop-during-development) uses a Vulkan software adapter and Xvfb. It checks that invalid WGSL leaves the red prop visible, then replaces the broken source with a shader that renders the prop green. It records the machine and the time from the disk edit to the first green frame. The check fails at one second or more.
+The [manual fixture](../CONTRIBUTING.md#reload-an-authored-prop-during-development) samples the Windows desktop with DirectX 12 or Xvfb with a Linux Vulkan adapter. It checks that invalid WGSL leaves the red prop visible, then replaces the broken source with a shader that renders the prop green. It records the machine and the time from the disk edit to the first green frame. The check fails at one second or more.
