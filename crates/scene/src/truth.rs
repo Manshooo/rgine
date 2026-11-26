@@ -9,8 +9,13 @@ use engine_core::{
     Reflect, TypeRegistry,
     reflection::{Field, TypeKey, TypeShape},
 };
+use ron::value::RawValue;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
+
+mod persistence;
+
+pub use persistence::{SceneError, SceneTypeName};
 
 /// Stable GUID of an authored object within its scene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -46,7 +51,7 @@ pub struct PropertyValue {
     type_id: TypeId,
     type_name: &'static str,
     // A RON fragment snapshots nested values without sharing their mutable state.
-    data: Arc<str>,
+    data: Arc<RawValue>,
 }
 
 impl PropertyValue {
@@ -58,7 +63,7 @@ impl PropertyValue {
                 actual: type_name::<T>(),
             });
         }
-        Ok(ron::from_str(&self.data)?)
+        Ok(self.data.into_rust()?)
     }
 }
 
@@ -299,7 +304,7 @@ impl<'registry> Truth<'registry> {
         let snapshot = PropertyValue {
             type_id: field.type_id,
             type_name: field.type_name,
-            data: ron::to_string(value)?.into(),
+            data: RawValue::from_rust(value)?.into(),
         };
         self.edit_property(id, field.name, Some(snapshot));
         Ok(())

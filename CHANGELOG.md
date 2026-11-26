@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- `engine-scene` saves and opens versioned RON scenes with stable node IDs, hierarchies and authored references.
 - `engine-scene` stores reflected authoring objects and stable references in Truth. Its journal can rewind object creation, reparenting, property edits and subtree deletion (ADR 0004).
 - Static glTF props accept uncompressed RGBA8 KTX2 base color maps with authored mip levels and linear or sRGB sampling.
 - Static glTF props can be imported with cached geometry, node transforms and opaque PBR factors. The `gltf_prop` example displays a level marker with an external mesh buffer.
