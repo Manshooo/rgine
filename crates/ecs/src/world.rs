@@ -12,8 +12,8 @@ use crate::relation::Relations;
 use crate::storage::{SparseIndex, Store, Stores};
 use crate::{
     Commands, Component, ComponentHook, ComponentLifecycle, ComponentMetadata, ComponentRef,
-    Entity, Query, QueryData, QueryFilter, Relation, RelationError, RequiredComponent, StorageKind,
-    Tick,
+    Entity, Query, QueryData, QueryFilter, Relation, RelationError, RequiredComponent, Resources,
+    StorageKind, Tick,
 };
 
 /// Owner of entities and their components.
@@ -27,6 +27,7 @@ pub struct World {
     archetypes: Archetypes,
     stores: Stores,
     relations: Relations,
+    resources: Resources,
     tick: Tick,
     hook_commands: Commands,
 }
@@ -36,6 +37,17 @@ impl World {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Borrows data scoped to this world. Component hooks can read it.
+    #[must_use]
+    pub fn resources(&self) -> &Resources {
+        &self.resources
+    }
+
+    /// Mutably borrows data scoped to this world.
+    pub fn resources_mut(&mut self) -> &mut Resources {
+        &mut self.resources
     }
 
     /// Returns the current ECS change tick.

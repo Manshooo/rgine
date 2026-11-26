@@ -53,10 +53,12 @@ impl Skybox {
             .inverse();
         let mut bytes = [0; UNIFORM_SIZE.get() as usize];
         for (slot, value) in bytes
-            .chunks_exact_mut(4)
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
             .zip(world_from_clip.to_cols_array())
         {
-            slot.copy_from_slice(&value.to_le_bytes());
+            *slot = value.to_le_bytes();
         }
         table.write_buffer(self.uniform, 0, &bytes)?;
         Ok(())

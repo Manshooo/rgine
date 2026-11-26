@@ -266,7 +266,9 @@ fn primitive(p: gltf::Primitive<'_>, buffers: &[Vec<u8>]) -> io::Result<Primitiv
         uv = indices.iter().map(|&i| uv[i as usize]).collect();
         indices = (0..u32::try_from(positions.len()).map_err(invalid)?).collect();
         positions
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|t| {
                 let a = Vec3::from(t[0]);
                 [(Vec3::from(t[1]) - a)

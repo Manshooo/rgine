@@ -210,10 +210,10 @@ impl<A: Copy + Eq> InputActions<A> {
                 } else {
                     self.resolve(binding)
                 };
-                if let Some(action) = action {
-                    if !self.is_held(action) {
-                        self.events.push(ActionEvent::Pressed(action));
-                    }
+                if let Some(action) = action
+                    && !self.is_held(action)
+                {
+                    self.events.push(ActionEvent::Pressed(action));
                 }
                 self.down.push(Down {
                     window,
@@ -230,10 +230,10 @@ impl<A: Copy + Eq> InputActions<A> {
     }
 
     fn end_source(&mut self, index: usize) {
-        if let Some(action) = self.down[index].action.take() {
-            if !self.is_held(action) {
-                self.events.push(ActionEvent::Released(action));
-            }
+        if let Some(action) = self.down[index].action.take()
+            && !self.is_held(action)
+        {
+            self.events.push(ActionEvent::Released(action));
         }
     }
 

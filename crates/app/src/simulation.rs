@@ -1,12 +1,11 @@
 //! Fixed-step simulation shared by the platform runner and headless callers.
 
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::any::Any;
 use std::num::NonZeroU32;
 use std::time::Duration;
 
 use engine_core::time::Clock;
-use engine_ecs::{Schedule, World};
+use engine_ecs::{Resources, Schedule, World};
 use engine_platform::{Input, InputEvent};
 
 use crate::{InputActions, InputRecording, ReplayError};
@@ -40,29 +39,6 @@ impl Default for FixedStep {
             Duration::from_nanos(16_666_667),
             NonZeroU32::new(8).unwrap(),
         )
-    }
-}
-
-/// App-wide data with one value per Rust type.
-#[derive(Default)]
-pub struct Resources(HashMap<TypeId, Box<dyn Any + Send + Sync>>);
-
-impl Resources {
-    /// Inserts a resource, returning the previously stored value of its type.
-    pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) -> Option<T> {
-        self.0
-            .insert(TypeId::of::<T>(), Box::new(value))
-            .map(|old| *old.downcast::<T>().expect("resource key has one Rust type"))
-    }
-
-    /// Borrows the resource of type `T`, if one has been inserted.
-    pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.0.get(&TypeId::of::<T>())?.downcast_ref()
-    }
-
-    /// Mutably borrows the resource of type `T`.
-    pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
-        self.0.get_mut(&TypeId::of::<T>())?.downcast_mut()
     }
 }
 
