@@ -76,8 +76,8 @@ $env:RUST_LOG = 'info'
 .\target\codex-phase2-build\release\examples\procedural_scene.exe --render-v1-benchmark .\target\render-v1-run-1.json
 ```
 
-## CI iteration budgets
+## Measuring iteration budgets
 
-The existing Linux host job times a warm incremental build of the `procedural_scene` example as the Phase 2 gameplay workload. With `CARGO_INCREMENTAL=1`, the check builds the example once, changes its window title three times and measures each successive `cargo build --offline --locked -p engine-app --example procedural_scene`. It logs the samples and fails when the median reaches 10 seconds. The warm build and dependencies are outside the measured intervals. The ECS fixed-update benchmark continues to report timing separately.
+Run `CARGO_INCREMENTAL=1 python3 .github/scripts/check-incremental-build.py` to time a warm incremental build of the `procedural_scene` example. The script builds the example once, changes its window title three times and measures each successive build. It logs the samples and fails when the median reaches 10 seconds. The warm build and dependencies are outside the measured intervals. Run `cargo bench -p engine-ecs --bench fixed_update --locked` to measure fixed updates separately.
 
-The pull request CI catalogue check in [#49](https://github.com/Manshooo/rgine/issues/49) covers pipeline validation. The frame delivery gate runs on a desktop as described in [#51](https://github.com/Manshooo/rgine/issues/51). Inspector updates, live shader edits, asset reload, entering play mode, cold editor start and cached glTF imports need their corresponding editor or asset workflows before CI can measure those roadmap budgets.
+Run `cargo test -p engine-render --locked --lib scene::gpu::tests::validates_scene_pipeline_catalogue -- --exact` to validate the pipeline catalogue. The frame delivery gate runs on a desktop as described in [#51](https://github.com/Manshooo/rgine/issues/51). The [manual hot-reload fixture](CONTRIBUTING.md#reload-an-authored-prop-during-development) measures asset, scene and shader edits through the first changed frame.

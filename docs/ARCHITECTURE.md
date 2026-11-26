@@ -59,12 +59,12 @@ The renderer's internal `SHADER_VARIANTS` list enumerates the supported keys
 for shader creation and pipeline catalogue validation. Register each supported
 combination explicitly so a new axis only contributes valid combinations. The
 global cap is eight variants and the renderer fails to compile if the list
-exceeds it. CI prints the registered count and keys and checks that the budget
+exceeds it. The shader tests print the registered count and keys and check that the budget
 rejects a fixture one past the cap.
 
 The catalogue covers the scene's six drawable color formats and both sampled
 binding profiles. The directional shadow key is color independent, and skybox
-keys are shared by both binding profiles. CI creates these pipelines with the
+keys are shared by both binding profiles. The renderer tests create these pipelines with the
 runtime layouts and descriptors on the test-only wgpu Noop backend, which runs
 wgpu validation without a native graphics driver. Drawables prepare the keys for
 their selected configuration and retain them for the lifetime of the device.

@@ -155,6 +155,17 @@ impl Drawable {
         self.scene.prepare_pipelines(&mut self.resources, format)
     }
 
+    /// Rebuilds affected scene pipelines and publishes them after every candidate validates.
+    /// Returns whether any currently prepared pipeline changed.
+    #[cfg(feature = "shader-reload")]
+    pub fn reload_scene_shaders(
+        &mut self,
+        sources: &crate::SceneShaderSources,
+    ) -> Result<bool, RenderError> {
+        self.prepare_scene_pipelines()?;
+        self.scene.reload_shaders(&mut self.resources, sources)
+    }
+
     /// Counts successful scene pipeline creations on this drawable's device.
     /// Take the difference between samples before and after a measured pass.
     pub fn scene_pipeline_creations(&self) -> usize {

@@ -1,6 +1,6 @@
 # Roadmap
 
-Every phase carries the same cross-cutting exit criterion: the iteration budgets below are measured in CI and do not regress.
+Each phase measures its iteration budgets on the reference machine and checks them for regressions.
 
 ## Iteration budgets
 
@@ -45,7 +45,7 @@ wgpu device/surface, Render Graph, camera, PBR, shadows, skybox.
 
 Exit: primitive scene at stable 60 FPS on reference desktop, with no first-use pipeline hitch in a scripted camera pass.
 
-The [Render v1 measurement protocol](render-v1-measurement.md) defines the reference run and the iteration budget measured in CI.
+The [Render v1 measurement protocol](render-v1-measurement.md) defines the reference run and the iteration budget.
 
 ## Phase 3. Assets + Scenes
 GUID, .meta, import cache, glTF, KTX2, RON, migrations, prefabs, hot reload.

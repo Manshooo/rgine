@@ -11,4 +11,4 @@ The app stages a fresh mesh registry when asset inputs change and reconciles the
 
 ## Verification
 
-The Linux CI fixture launches the normal app loop in Xvfb with a Vulkan software adapter. It edits an external glTF buffer and a RON placement in the same running process and observes the changed pixels. The asset budget is under two seconds from the disk write to the visible change. Invalid edits exercise the same pipeline and preserve the last visible result.
+The [manual Linux fixture](../CONTRIBUTING.md#reload-an-authored-prop-during-development) launches the normal app loop in Xvfb with a Vulkan software adapter. It edits an external glTF buffer and a RON placement in the same running process and observes the changed pixels. The asset budget is under two seconds from the disk write to the visible change. Invalid edits exercise the same pipeline and preserve the last visible result.

@@ -9,5 +9,7 @@ pub mod scene;
 mod shaders;
 
 pub use drawable::{BenchmarkGraphics, DrawOutcome, Drawable, RenderError};
+#[cfg(feature = "shader-reload")]
+pub use shaders::SceneShaderSources;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

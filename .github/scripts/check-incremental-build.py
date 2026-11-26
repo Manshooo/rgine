@@ -1,4 +1,4 @@
-"""Check the Phase 2 incremental gameplay build budget in a CI checkout."""
+"""Check the incremental gameplay build budget from a local checkout."""
 
 import statistics
 import subprocess

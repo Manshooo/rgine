@@ -83,17 +83,12 @@ The reason is `git bisect`. One commit per unit of work means every commit on `m
 
 Required before merge:
 
-- `cargo fmt --all -- --check`
-- `cargo check --workspace --locked` on Linux, Windows and the Android target
-- `cargo test --workspace --locked`
-- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
-- `cargo check --workspace --all-targets --locked` on the MSRV toolchain
+- Build the workspace libraries, binaries and examples with all features on Linux, Windows and Android arm64.
+- Check workspace libraries, binaries and examples with all features on the MSRV toolchain.
 - `cargo deny check all`
 - `cargo xtask check-deps`
 
-As the corresponding roadmap phases land, these join the list: the public API and schema snapshot checks required by ADR 0005, and the iteration budget harness.
-
-The CI workflow adds Intel macOS tests and an Apple Silicon cross-check for release tags and manual runs. Use `gh workflow run ci.yml --ref master` to run the full checks on demand. Pull requests restore the Rust cache, and runs on `master` save it.
+The CI workflow adds Intel and Apple Silicon macOS builds for release tags and manual runs. Use `gh workflow run ci.yml --ref master` to build on all platforms. Pull requests restore the Rust cache, and runs on `master` save it. Run tests, formatting, Clippy and the relevant performance checks locally.
 
 ## Task tracking
 
@@ -226,4 +221,14 @@ Copy the sample scene and the glTF fixture with its external buffer to a working
 cargo run --locked -p engine-app --features hot-reload --example hot_reload -- ./level.scene.ron ./marker.gltf
 ```
 
-The sample scene is in [the app fixtures](../crates/app/examples/fixtures/hot-reload.scene.ron). The model and its buffer are in [the asset fixtures](../crates/asset/tests/fixtures). Edit the model, buffer or scene while the window is open. Supply a KTX2 file as the optional third argument to watch the base-color texture. [ADR 0023](adr/0023-development-asset-reload.md) describes the refresh and the CI measurement.
+The sample scene is in [the app fixtures](../crates/app/examples/fixtures/hot-reload.scene.ron). The model and its buffer are in [the asset fixtures](../crates/asset/tests/fixtures). Edit the model, buffer or scene while the window is open. Supply a KTX2 file as the optional third argument to watch the base-color texture. [ADR 0023](adr/0023-development-asset-reload.md) describes the refresh.
+
+Append `--shaders ./crates/render/src/scene` to watch the scene WGSL files. Edit the fragment in `primitive_classic.wgsl` when running with `RGINE_FORCE_CLASSIC=1`, or edit `primitive.wgsl` to change lighting in either binding mode. The app reports shader errors on stderr and keeps drawing with its last working pipelines. [ADR 0024](adr/0024-development-shader-reload.md) describes the pipeline update.
+
+To measure asset, scene and shader reload through the first changed frame on Linux, install `xvfb`, `xauth`, `mesa-vulkan-drivers` and `libxkbcommon-x11-0` on Ubuntu and run:
+
+```sh
+cargo build --locked -p engine-app --features hot-reload --example hot_reload
+WGPU_BACKEND=vulkan RGINE_FORCE_CLASSIC=1 xvfb-run -a -s '-screen 0 320x240x24' \
+  python3 .github/scripts/check-hot-reload.py target/debug/examples/hot_reload
+```

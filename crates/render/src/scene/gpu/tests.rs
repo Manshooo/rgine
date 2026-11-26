@@ -97,13 +97,69 @@ fn scene_pipeline_keys_include_binding_mode_and_layout() {
     let bindless = ScenePipelineKey::new(format, BindingMode::Bindless);
     assert_ne!(classic, bindless);
     assert_ne!(classic.shader, bindless.shader);
-    assert!(classic.shader.wgsl().is_some());
-    assert!(bindless.shader.wgsl().is_some());
+    let sources = SceneShaderSources::default();
+    assert!(classic.shader.wgsl(&sources).is_some());
+    assert!(bindless.shader.wgsl(&sources).is_some());
     assert_ne!(classic.layout, bindless.layout);
     assert_eq!(
         (bindless.layout.sampled_textures, bindless.layout.samplers),
         (128, 16)
     );
+}
+
+#[cfg(feature = "shader-reload")]
+#[test]
+fn shader_reload_publishes_pipeline_replacements_together() {
+    use std::{fs, path::Path};
+
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::NOOP;
+    descriptor.backend_options.noop.enable = true;
+    let instance = wgpu::Instance::new(descriptor);
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let mut pipelines = ScenePipelines::default();
+    pipelines.prepare(&mut table, format, true).unwrap();
+    let previous = pipelines.entries.clone();
+
+    let directory = tempfile::tempdir().unwrap();
+    let scene_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/scene");
+    for entry in scene_dir.read_dir().unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "wgsl")
+        {
+            fs::copy(&path, directory.path().join(path.file_name().unwrap())).unwrap();
+        }
+    }
+    let object = directory.path().join("object.wgsl");
+    let object_source = fs::read_to_string(&object).unwrap();
+    fs::write(
+        object,
+        format!("{object_source}\n// Edit shared object source\n"),
+    )
+    .unwrap();
+    let classic = directory.path().join("primitive_classic.wgsl");
+    fs::write(&classic, "invalid wgsl").unwrap();
+    let load = || {
+        SceneShaderSources::load(directory.path(), &mut engine_asset::SourceFiles::default())
+            .unwrap()
+    };
+    let error = pipelines.reload(&mut table, &load()).unwrap_err();
+    assert!(error.to_string().contains("primitive_classic.wgsl"));
+    assert_eq!(pipelines.entries, previous);
+    assert_eq!(pipelines.created, previous.len());
+
+    fs::copy(scene_dir.join("primitive_classic.wgsl"), classic).unwrap();
+    let corrected = load();
+    assert!(pipelines.reload(&mut table, &corrected).unwrap());
+    assert_eq!(pipelines.entries.len(), previous.len());
+    assert_eq!(pipelines.created, previous.len() + 2);
+    let skybox = ScenePipelineKey::skybox(format);
+    assert_eq!(pipelines.entries[&skybox], previous[&skybox]);
+    assert!(!pipelines.reload(&mut table, &corrected).unwrap());
 }
 
 #[test]
