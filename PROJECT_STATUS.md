@@ -1,6 +1,6 @@
 # Project status
-**Date**: 2026-11-25
-**Milestone**: 3 - Assets + Scenes, next
+**Date**: 2026-11-26
+**Milestone**: 4 - Physics + 3D Platformer
 **Version**: 0.1.0-dev
 
 ## Phase 0 exit
@@ -52,9 +52,13 @@ The [exit run](https://github.com/Manshooo/rgine/issues/51) passed on the approv
 
 The Linux CI host job enforces the 10-second incremental gameplay build budget using the procedural scene example. Deferred rendering work is tracked in [Render follow-ups](https://github.com/Manshooo/rgine/milestone/9).
 
+## Phase 3 exit
+
+The [acceptance report](docs/phase-3-exit.md) records the save and load round-trip, three-way RON merge and hot reload in the running scene. The measured import, asset reload, shader reload and incremental build stayed within their budgets. The scripting review kept gameplay in Rust for 0.1, with tuning and transitions exposed as data.
+
 ## Next
 
-[Phase 3: Assets + Scenes](https://github.com/Manshooo/rgine/milestone/4) starts with stable asset identities, reproducible asset imports and scene persistence.
+[Phase 4](https://github.com/Manshooo/rgine/milestone/5) starts with [input actions](https://github.com/Manshooo/rgine/issues/68), [fixed-step physics](https://github.com/Manshooo/rgine/issues/85) and [XML widget trees](https://github.com/Manshooo/rgine/issues/88). Input and physics unblock character movement. The widget tree unblocks CSS and layout. The phase ends with the same playable level verified on desktop and Android.
 
 ## Deferred
 - [ ] CI checks the incremental gameplay build budget. The remaining iteration budgets need editor and asset workflows before CI can measure them.

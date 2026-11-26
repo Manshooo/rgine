@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use engine_core::time::Clock;
 use engine_ecs::{Schedule, World};
-use engine_platform::InputEvent;
+use engine_platform::{Input, InputEvent};
 
-use crate::{InputRecording, ReplayError};
+use crate::{InputActions, InputRecording, ReplayError};
 
 /// Timing and catch-up policy for the fixed simulation.
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +73,7 @@ pub struct StepContext {
     delta: Duration,
     index: u64,
     input: Vec<InputEvent>,
+    actions: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl StepContext {
@@ -94,6 +95,16 @@ impl StepContext {
         &self.input
     }
 
+    /// The resolved actions for the type installed with [`crate::App::set_input_actions`].
+    pub fn actions<A: 'static>(&self) -> Option<&InputActions<A>> {
+        self.actions.as_ref()?.downcast_ref()
+    }
+
+    /// Allows systems to push or pop contexts for the next step's input.
+    pub fn actions_mut<A: 'static>(&mut self) -> Option<&mut InputActions<A>> {
+        self.actions.as_mut()?.downcast_mut()
+    }
+
     /// The resources registered with the app.
     #[must_use]
     pub fn resources(&self) -> &Resources {
@@ -106,6 +117,8 @@ impl StepContext {
     }
 }
 
+type RouteInput = Box<dyn FnMut(&mut StepContext)>;
+
 /// The world and schedule for a fixed-step application. It can run without
 /// a window or wall-clock timing.
 #[derive(Default)]
@@ -117,9 +130,30 @@ pub struct Simulation {
     pub(crate) clock: Clock,
     pending_input: Vec<InputEvent>,
     recording: Option<InputRecording>,
+    route_input: Option<RouteInput>,
 }
 
 impl Simulation {
+    pub(crate) fn set_input_actions<A: Copy + Eq + Send + Sync + 'static>(
+        &mut self,
+        actions: InputActions<A>,
+        mut intercept: impl FnMut(&InputEvent, &mut InputActions<A>, &mut Resources) -> bool + 'static,
+    ) {
+        self.context.actions = Some(Box::new(actions));
+        self.route_input = Some(Box::new(move |context| {
+            let actions = context
+                .actions
+                .as_mut()
+                .and_then(|actions| actions.downcast_mut::<InputActions<A>>())
+                .expect("resolver installed with its routing callback");
+            actions.begin_step();
+            for event in &context.input {
+                let consumed = intercept(event, actions, &mut context.resources);
+                actions.route(event, consumed);
+            }
+        }));
+    }
+
     /// Advances by the elapsed frame duration and returns the number of steps
     /// actually run. Whole steps beyond the catch-up limit are discarded.
     pub fn advance(&mut self, elapsed: Duration) -> u32 {
@@ -144,6 +178,9 @@ impl Simulation {
     fn run_step(&mut self) {
         self.context.delta = self.fixed_step.duration;
         self.context.index += 1;
+        if let Some(route_input) = &mut self.route_input {
+            route_input(&mut self.context);
+        }
         self.schedule.run(&mut self.world, &mut self.context);
     }
 
@@ -169,8 +206,10 @@ impl Simulation {
         self.pending_input.extend(events);
     }
 
-    pub(crate) fn discard_pending_input(&mut self) {
-        self.pending_input.clear();
+    pub(crate) fn discard_suspended_input(&mut self) {
+        // The old window's cancellation must reach the first step after resume.
+        self.pending_input
+            .retain(|event| event.input == Input::Cancelled);
     }
 
     /// Starts recording the next step and returns whether a new recording began.

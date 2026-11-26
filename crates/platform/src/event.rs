@@ -18,6 +18,7 @@ pub enum Event {
     Resumed,
     /// Platform surfaces are going away; window handles must not be used until
     /// the next [`Event::Resumed`].
+    /// Window input cancellations precede this event.
     Suspended,
     /// An event addressed to a single window.
     Window {

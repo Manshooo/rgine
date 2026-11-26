@@ -13,7 +13,12 @@ use crate::{Input, KeyCode, MouseButton, NativeKeyCode, PhysicalKey, ScrollDelta
 
 pub(super) fn translate(event: WindowEvent) -> Option<Input> {
     Some(match event {
-        WindowEvent::KeyboardInput { event, .. } => Input::Key {
+        WindowEvent::Focused(false) => Input::Cancelled,
+        WindowEvent::KeyboardInput {
+            event,
+            is_synthetic,
+            ..
+        } if !is_synthetic || event.state == ElementState::Released => Input::Key {
             key: physical_key(event.physical_key),
             pressed: event.state == ElementState::Pressed,
             repeat: event.repeat,
@@ -130,5 +135,14 @@ mod tests {
                 y: 4.0
             })
         );
+    }
+
+    #[test]
+    fn losing_focus_cancels_the_window_input() {
+        assert_eq!(
+            translate(WindowEvent::Focused(false)),
+            Some(Input::Cancelled)
+        );
+        assert_eq!(translate(WindowEvent::Focused(true)), None);
     }
 }

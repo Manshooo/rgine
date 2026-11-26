@@ -14,8 +14,8 @@ use winit::{
 
 use super::winit_input;
 use crate::{
-    Command, Commands, Event, InputEvent, InputTimestamp, PlatformApp, PlatformError, SurfaceEvent,
-    SurfaceSource, WindowEvent, WindowId, window::SurfaceHandles,
+    Command, Commands, Event, Input, InputEvent, InputTimestamp, PlatformApp, PlatformError,
+    SurfaceEvent, SurfaceSource, WindowEvent, WindowId, window::SurfaceHandles,
 };
 
 pub(crate) fn run<A: PlatformApp>(app: A) -> Result<(), PlatformError> {
@@ -139,7 +139,15 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        for &window in self.windows.keys() {
+        let timestamp = InputTimestamp::Received(self.started.elapsed());
+        let mut windows: Vec<_> = self.windows.keys().copied().collect();
+        windows.sort_unstable();
+        for window in windows {
+            self.events.push(Event::Input(InputEvent {
+                window,
+                timestamp,
+                input: Input::Cancelled,
+            }));
             self.app.surface_event(SurfaceEvent::Invalidating(window));
         }
         self.events.push(Event::Suspended);
