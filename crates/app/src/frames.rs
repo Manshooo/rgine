@@ -136,6 +136,16 @@ impl Frames {
         !self.occluded && !self.size.contains(&0)
     }
 
+    pub(crate) fn refresh_scene(
+        &mut self,
+        world: &mut World,
+        refresh: &mut crate::SceneRefresh<'_>,
+    ) -> bool {
+        self.scene
+            .as_mut()
+            .is_some_and(|scene| refresh(world, &mut scene.meshes))
+    }
+
     pub(crate) fn attach(&mut self, source: SurfaceSource, size: [u32; 2]) {
         self.surface = Some(Surface::Pending(source));
         self.size = size;

@@ -14,7 +14,7 @@ use crate::graph::{CompiledGraph, RenderGraph};
 use crate::resources::{
     BINDLESS_SAMPLERS, BINDLESS_TEXTURES, BindingMode, BufferDescriptor, BufferHandle, BufferKind,
     ResourceError, ResourceTable, SampledBinding, SampledGroupHandle, SamplerDescriptor,
-    SamplerFilter, SamplerHandle, TextureDescriptor, TextureFormat, UniformBinding,
+    SamplerFilter, SamplerHandle, TextureDescriptor, TextureFormat, TextureHandle, UniformBinding,
     UniformGroupHandle, checked_gpu,
 };
 use crate::shaders::ShaderVariantKey;
@@ -170,8 +170,9 @@ pub(crate) struct SceneRenderer {
     skybox: Option<skybox::Skybox>,
     pipelines: ScenePipelines,
     target: Option<SceneTargets>,
+    registry: Option<u64>,
     meshes: HashMap<MeshKey, GpuMesh>,
-    materials: HashMap<MaterialTexture, MaterialBinding>,
+    materials: HashMap<MaterialTexture, (MaterialBinding, Option<TextureHandle>)>,
     imported_sampler: Option<SamplerHandle>,
     uniforms: Option<ObjectUniforms>,
 }
@@ -207,6 +208,20 @@ impl SceneRenderer {
         scene: &Scene,
         size: [u32; 2],
     ) -> Result<(), RenderError> {
+        if self.registry != Some(meshes.id) {
+            for (_, mesh) in self.meshes.drain() {
+                table.release_buffer(mesh.vertices)?;
+                table.release_buffer(mesh.indices)?;
+            }
+            for (surface, material) in std::mem::take(&mut self.materials) {
+                if let Some(texture) = material.1 {
+                    table.release_texture(texture)?;
+                } else {
+                    self.materials.insert(surface, material);
+                }
+            }
+            self.registry = Some(meshes.id);
+        }
         if self
             .target
             .as_ref()
@@ -258,27 +273,38 @@ impl SceneRenderer {
                 ))
             })?;
             let binding = match self.materials.entry(mesh.surface) {
-                Entry::Occupied(entry) => *entry.get(),
-                Entry::Vacant(entry) => *entry.insert(match mesh.surface {
-                    MaterialTexture::Solid => MaterialBinding::builtin(table, false)?,
-                    MaterialTexture::Checkerboard => MaterialBinding::builtin(table, true)?,
-                    MaterialTexture::Imported { index, .. } => {
-                        let texture = &meshes.textures[index];
-                        if self.imported_sampler.is_none() {
-                            self.imported_sampler =
-                                Some(table.create_sampler(SamplerDescriptor {
-                                    filter: SamplerFilter::Linear,
-                                    ..SamplerDescriptor::NEAREST_CLAMP
-                                })?);
-                        }
-                        MaterialBinding::imported(
-                            table,
-                            texture,
-                            self.imported_sampler.expect("imported texture sampler"),
-                        )
-                        .map_err(|e| RenderError(format!("{}: {e}", texture.source().display())))?
-                    }
-                }),
+                Entry::Occupied(entry) => entry.get().0,
+                Entry::Vacant(entry) => {
+                    entry
+                        .insert(match mesh.surface {
+                            MaterialTexture::Solid => {
+                                (MaterialBinding::builtin(table, false)?, None)
+                            }
+                            MaterialTexture::Checkerboard => {
+                                (MaterialBinding::builtin(table, true)?, None)
+                            }
+                            MaterialTexture::Imported { index, .. } => {
+                                let texture = &meshes.textures[index];
+                                if self.imported_sampler.is_none() {
+                                    self.imported_sampler =
+                                        Some(table.create_sampler(SamplerDescriptor {
+                                            filter: SamplerFilter::Linear,
+                                            ..SamplerDescriptor::NEAREST_CLAMP
+                                        })?);
+                                }
+                                MaterialBinding::imported(
+                                    table,
+                                    texture,
+                                    self.imported_sampler.expect("imported texture sampler"),
+                                )
+                                .map(|(binding, texture)| (binding, Some(texture)))
+                                .map_err(|e| {
+                                    RenderError(format!("{}: {e}", texture.source().display()))
+                                })?
+                            }
+                        })
+                        .0
+                }
             };
             entry.insert(GpuMesh::upload(table, mesh, binding)?);
         }
@@ -659,7 +685,7 @@ impl MaterialBinding {
         table: &mut ResourceTable,
         asset: &Texture,
         sampler: SamplerHandle,
-    ) -> Result<Self, ResourceError> {
+    ) -> Result<(Self, TextureHandle), ResourceError> {
         let mut descriptor = TextureDescriptor::sampled_rgba8(asset.size());
         descriptor.format = match asset.color_space() {
             ColorSpace::Linear => TextureFormat::Rgba8Unorm,
@@ -676,7 +702,7 @@ impl MaterialBinding {
         if material.is_err() {
             table.release_texture(texture)?;
         }
-        material
+        material.map(|binding| (binding, texture))
     }
 
     fn bind(table: &mut ResourceTable, binding: SampledBinding) -> Result<Self, ResourceError> {

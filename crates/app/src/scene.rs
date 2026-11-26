@@ -29,6 +29,12 @@ impl Default for Transform {
     }
 }
 
+impl Transform {
+    fn matrix(self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+    }
+}
+
 /// Perspective settings for an entity with a transform.
 ///
 /// The scene uses the first camera in ECS query order.
@@ -90,14 +96,23 @@ pub(crate) fn extract_into(world: &World, scene: &mut Scene) {
         .for_each(|entity, (renderable, transform)| {
             scene.objects.push(SceneObject {
                 mesh: renderable.mesh,
-                transform: Mat4::from_scale_rotation_translation(
-                    transform.scale,
-                    transform.rotation,
-                    transform.translation,
-                ) * world
-                    .get::<NodeMatrix>(entity)
-                    .map_or(Mat4::IDENTITY, |m| m.0),
+                transform: transform.matrix()
+                    * world
+                        .get::<NodeMatrix>(entity)
+                        .map_or(Mat4::IDENTITY, |m| m.0),
                 color: renderable.color,
             });
+        });
+    #[cfg(feature = "hot-reload")]
+    world
+        .query::<(&crate::hot_reload::PropInstances, &Transform)>()
+        .for_each(|_, (instances, transform)| {
+            let world_transform = transform.matrix();
+            scene
+                .objects
+                .extend(instances.0.iter().map(|object| SceneObject {
+                    transform: world_transform * object.transform,
+                    ..*object
+                }));
         });
 }

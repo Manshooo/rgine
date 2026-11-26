@@ -6,17 +6,26 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+hot-reload = ["dep:engine-scene"]
+
 [dependencies]
 engine-asset.workspace = true
 engine-core.workspace = true
 engine-ecs.workspace = true
 engine-platform.workspace = true
 engine-render.workspace = true
+engine-scene = { workspace = true, optional = true }
 serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile = "3"
 
 [[example]]
 name = "clear_window_android"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "hot_reload"
+required-features = ["hot-reload"]

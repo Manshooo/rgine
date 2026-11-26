@@ -430,8 +430,10 @@ dependencies = [
  "engine-ecs",
  "engine-platform",
  "engine-render",
+ "engine-scene",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
