@@ -4,6 +4,7 @@
 //! Fixed-step 3D physics for an ECS world.
 
 mod backend;
+mod kinematic;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,7 @@ use engine_core::glam::{Quat, Vec3};
 use engine_ecs::{Commands, Component, Entity, World};
 
 use backend::Backend;
+pub use kinematic::{KinematicMotion, KinematicMove};
 
 /// The version of the physics crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -53,6 +55,8 @@ pub enum BodyKind {
     Dynamic,
     /// Stays at its configured position.
     Fixed,
+    /// Moves by game-supplied displacement through a [`KinematicMotion`] component.
+    Kinematic,
 }
 
 /// Construction data for a rigid body. Remove and reinsert to rebuild it.
@@ -210,6 +214,7 @@ impl PhysicsWorld {
         );
         assert!(!delta.is_zero(), "physics timestep must be positive");
         let pending = std::mem::take(&mut *self.pending.lock().unwrap());
+        let mut refresh_queries = !pending.is_empty();
         for (entity, changes) in pending {
             let body = world.get::<RigidBody>(entity);
             let collider = world.get::<Collider>(entity);
@@ -220,7 +225,20 @@ impl PhysicsWorld {
                 commands.remove::<PhysicsPose>(entity);
             }
         }
-        self.backend.step(delta.as_secs_f32());
+        let seconds = delta.as_secs_f32();
+        world
+            .query::<&mut KinematicMotion>()
+            .for_each(|entity, motion| {
+                motion.result = motion.requested.take().and_then(|translation| {
+                    if refresh_queries {
+                        self.backend.refresh_queries();
+                        refresh_queries = false;
+                    }
+                    self.backend
+                        .move_kinematic(entity, translation, motion.up, seconds)
+                });
+            });
+        self.backend.step(seconds);
         let mut poses = world.query::<&mut PhysicsPose>();
         for (entity, pose) in self.backend.poses() {
             if poses.get(entity) != Some(&pose) {

@@ -4,9 +4,12 @@ use std::sync::mpsc::{Receiver, channel};
 
 use engine_core::glam::{Quat, Vec3};
 use engine_ecs::Entity;
+use rapier3d::control::KinematicCharacterController;
 use rapier3d::prelude as rapier;
 
-use crate::{BodyKind, Changes, Collider, ColliderShape, ContactEvent, PhysicsPose, RigidBody};
+use crate::{
+    BodyKind, Changes, Collider, ColliderShape, ContactEvent, KinematicMove, PhysicsPose, RigidBody,
+};
 
 #[derive(Default)]
 struct Handles {
@@ -65,6 +68,7 @@ impl Backend {
             let builder = match body.kind {
                 BodyKind::Dynamic => rapier::RigidBodyBuilder::dynamic(),
                 BodyKind::Fixed => rapier::RigidBodyBuilder::fixed(),
+                BodyKind::Kinematic => rapier::RigidBodyBuilder::kinematic_position_based(),
             };
             handles.body = Some(
                 self.world
@@ -90,6 +94,54 @@ impl Backend {
             self.handles.remove(&entity);
         }
         changes.body_removed && body.is_none()
+    }
+
+    pub(super) fn refresh_queries(&mut self) {
+        // Reconciled colliders must be visible before the requested movement.
+        // A zero timestep updates Rapier's queries and contacts without integration.
+        self.world.integration_parameters.dt = 0.0;
+        self.world.step_with_events(&(), &self.event_collector);
+    }
+
+    pub(super) fn move_kinematic(
+        &mut self,
+        entity: Entity,
+        translation: Vec3,
+        up: Vec3,
+        seconds: f32,
+    ) -> Option<KinematicMove> {
+        let handles = self.handles.get(&entity)?;
+        let body_handle = handles.body?;
+        let body = &self.world.bodies[body_handle];
+        let collider = &self.world.colliders[handles.collider?];
+        if !body.is_kinematic() || collider.is_sensor() {
+            return None;
+        }
+
+        let query = self.world.query_pipeline_with_filter(
+            rapier::QueryFilter::default()
+                .exclude_rigid_body(body_handle)
+                .exclude_sensors(),
+        );
+        let controller = KinematicCharacterController {
+            up: rapier::Vector::from_array(up.to_array()),
+            snap_to_ground: None,
+            ..KinematicCharacterController::default()
+        };
+        let movement = controller.move_shape(
+            seconds,
+            &query,
+            collider.shape(),
+            collider.position(),
+            rapier::Vector::from_array(translation.to_array()),
+            |_| {},
+        );
+        let next = body.translation() + movement.translation;
+        self.world.bodies[body_handle].set_next_kinematic_translation(next);
+        Some(KinematicMove {
+            translation: Vec3::from_array(movement.translation.to_array()),
+            grounded: movement.grounded,
+        })
     }
 
     pub(super) fn step(&mut self, seconds: f32) {
