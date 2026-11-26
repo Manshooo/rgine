@@ -138,7 +138,7 @@ fn parse(bytes: &[u8]) -> Result<Parsed, String> {
     }
     let mut levels = Vec::with_capacity(count as usize);
     let mut previous_start = bytes.len();
-    for (level, entry) in index.chunks_exact(LEVEL_ENTRY_SIZE).enumerate() {
+    for (level, entry) in index.as_chunks::<LEVEL_ENTRY_SIZE>().0.iter().enumerate() {
         let width = (size[0] >> level).max(1);
         let height = (size[1] >> level).max(1);
         let expected = (u64::from(width) * u64::from(height)).checked_mul(4);

@@ -262,14 +262,14 @@ impl<P, D> RenderGraph<P, D> {
         for (index, pass) in self.passes.iter().enumerate() {
             for &resource in &pass.writes {
                 let resource = self.checked_resource(resource, &pass.name)?;
-                if let Some(first) = producers[resource].replace(index) {
-                    if first != index {
-                        return Err(GraphError::MultipleProducers {
-                            resource: self.resources[resource].name.clone(),
-                            first: self.passes[first].name.clone(),
-                            second: pass.name.clone(),
-                        });
-                    }
+                if let Some(first) = producers[resource].replace(index)
+                    && first != index
+                {
+                    return Err(GraphError::MultipleProducers {
+                        resource: self.resources[resource].name.clone(),
+                        first: self.passes[first].name.clone(),
+                        second: pass.name.clone(),
+                    });
                 }
             }
         }

@@ -326,10 +326,10 @@ fn scene_types(
 ) -> Result<BTreeMap<&'static str, &TypeRegistration>, SceneError> {
     let mut types = BTreeMap::new();
     for registration in registry.iter() {
-        if let Some(name) = scene_type_name(registration) {
-            if types.insert(name, registration).is_some() {
-                return Err(SceneError::DuplicateTypeName(name));
-            }
+        if let Some(name) = scene_type_name(registration)
+            && types.insert(name, registration).is_some()
+        {
+            return Err(SceneError::DuplicateTypeName(name));
         }
     }
     Ok(types)

@@ -872,8 +872,8 @@ impl ObjectUniforms {
                 .chain([frame.light.intensity])
                 .chain(frame.light.direction_to_light.to_array())
                 .chain([metallic, roughness]);
-            for (bytes, value) in slot.chunks_exact_mut(4).zip(values) {
-                bytes.copy_from_slice(&value.to_le_bytes());
+            for (bytes, value) in slot.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+                *bytes = value.to_le_bytes();
             }
             slot[228..232].copy_from_slice(&texture.to_le_bytes());
             slot[232..236].copy_from_slice(&sampler.to_le_bytes());
@@ -884,10 +884,12 @@ impl ObjectUniforms {
                 .chain(frame.hemisphere_light.upper.extend(0.0).to_array())
                 .chain(frame.hemisphere_light.lower.extend(0.0).to_array());
             for (bytes, value) in slot[240..UNIFORM_SIZE.get() as usize]
-                .chunks_exact_mut(4)
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
                 .zip(lighting)
             {
-                bytes.copy_from_slice(&value.to_le_bytes());
+                *bytes = value.to_le_bytes();
             }
         }
         table.write_buffer(self.buffer, 0, &self.bytes)?;
