@@ -67,8 +67,6 @@ Rapier adapter, game-owned movement, interpolation, checkpoints, collectibles, m
 
 **Exit**: a running fixture on desktop and Android verifies fixed-step gameplay, mobile input, a live collectible counter and a pause menu. Gameplay data, UI layouts and styles can be reloaded without rebuilding or restarting the fixture.
 
-Signal Run remains rgine's platformer proof of concept. After Phase 4, build an example game in a different genre using the completed engine features. The example can live in `examples/`.
-
 ### Game UI
 
 2D support covers the screen-space game interface. `engine-ui` keeps a tree of widgets built from XML layouts and styled with a documented subset of CSS. The authoring workflow follows [Valve Panorama](https://www.dota2.com/reborn/part2).
@@ -90,6 +88,12 @@ Add an opt-in frame profiler at the end of Phase 4. Use Deflection Arena to vali
 4. Export a bounded capture with named CPU and GPU ranges and a summary of median, p95 and p99 frame times. Use a trace viewer to inspect spikes and correlate the ranges and counters by frame ID. Collect samples in app and render and keep trace inspection in devtools.
 
 The initial Windows DX12 test uses a fixed Deflection Arena replay at the same resolution and settings. Compare the original HUD, the same glyph geometry batched by material and the arena with text hidden. The original debug comparison went from 26 FPS with 599 objects to 60 FPS with 34 while hiding text. The batched case holds the glyph geometry constant while reducing draw submissions and per-object setup. The capture should show where the difference appears in CPU preparation and encoding, GPU pass time and presentation pacing. Measure profiler overhead in separate disabled, CPU-only and CPU plus GPU runs.
+
+### Signal Run v2 after Phase 4
+
+After Phase 4 closes, rebuild [Signal Run](https://github.com/Manshooo/signal-run) as the 3D platformer that evaluates the completed engine features. Keep its seven-platform, five-coin level as the comparison route. Use fixed-step Rapier movement and interpolation, keyboard and touch input actions, and an XML/CSS HUD and pause menu with live bindings.
+
+Run the route on desktop and Android. Verify checkpoints, respawn, pause and finish, and measure frame pacing and the time for gameplay tuning and UI edits to appear in the running game. Record the game and engine revisions, the comparison with v1 and any gaps exposed by the migration. [Signal Run v2 evaluation plan](https://github.com/Manshooo/rgine/issues/180).
 
 ## Phase 5. Editor
 Hierarchy, Inspector, Viewport, gizmos, selection, Asset Browser, Console, Undo/Redo, isolated Play World.
