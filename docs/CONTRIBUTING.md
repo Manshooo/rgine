@@ -84,7 +84,7 @@ The reason is `git bisect`. One commit per unit of work means every commit on `m
 Required before merge:
 
 - `cargo fmt --all -- --check`
-- `cargo check --workspace --locked` on Linux, Windows, macOS and the Android target
+- `cargo check --workspace --locked` on Linux, Windows and the Android target
 - `cargo test --workspace --locked`
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
 - `cargo check --workspace --all-targets --locked` on the MSRV toolchain
@@ -92,6 +92,8 @@ Required before merge:
 - `cargo xtask check-deps`
 
 As the corresponding roadmap phases land, these join the list: the public API and schema snapshot checks required by ADR 0005, and the iteration budget harness.
+
+The CI workflow adds Intel macOS tests and an Apple Silicon cross-check for release tags and manual runs. Use `gh workflow run ci.yml --ref master` to run the full checks on demand. Pull requests restore the Rust cache, and runs on `master` save it.
 
 ## Task tracking
 
@@ -148,6 +150,7 @@ Release:
 4. Move `## [Unreleased]` to a dated version section in `CHANGELOG.md`.
 5. Merge that as `chore(release): v0.1.0`.
 6. Tag `v0.1.0` on the resulting commit and push the tag.
+7. Wait for all CI jobs on the tag, including macOS, to pass before publishing the release or distributing its artifacts.
 
 ## Dependencies and toolchain
 
