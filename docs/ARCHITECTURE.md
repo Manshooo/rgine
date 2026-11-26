@@ -34,7 +34,7 @@ Authoring data and runtime data are separate representations with a deterministi
 
 `World` holds runtime data: archetype storage, queries, deferred commands, stages.
 
-`Truth -> World` compilation is incremental. Development builds keep a bidirectional `Entity` to `AuthoringId` map; release builds strip it and do not link `Truth` at all.
+The full `Truth -> World` compiler is the reference for incremental compilation. Development builds keep a bidirectional `Entity` to `ObjectId` map. Shipped games disable `engine-scene`'s `authoring` feature and load compiled data without that map or Truth. [ADR 0019](adr/0019-compiled-scene-runtime.md) records the compiled artifact and instantiation contract.
 
 ## Backend API rules
 
