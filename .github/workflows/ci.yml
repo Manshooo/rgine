@@ -35,6 +35,9 @@ jobs:
           rustup target add aarch64-apple-darwin
           cargo check --workspace --all-targets --locked --target aarch64-apple-darwin
       - run: cargo test --workspace --locked
+      - name: Load a compiled scene in a release build without authoring
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p engine-scene --locked --release --no-default-features
       - name: Report warm glTF re-import time
         if: matrix.os == 'ubuntu-latest'
         run: cargo test -p engine-asset --locked --test gltf_prop measures_warm_reimport_of_ten_thousand_triangles -- --exact --nocapture
