@@ -8,3 +8,5 @@ repository.workspace = true
 
 [dependencies]
 engine-app.workspace = true
+engine-scene.workspace = true
+tempfile = "3"
