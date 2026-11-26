@@ -57,6 +57,8 @@ GUID, .meta, import cache, glTF, KTX2, RON, migrations, prefabs, hot reload.
 
 **Exit**: save/load round-trip, live scene reload, and a three-way merge of two divergent edits to one scene resolved without manual fixing.
 
+The [Phase 3 acceptance report](phase-3-exit.md) records the local scenario, reload times and scripting review.
+
 ## Phase 4. Physics + 3D Platformer
 Rapier adapter, character controller, interpolation, checkpoints, coins, mobile controls, game UI.
 

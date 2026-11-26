@@ -225,7 +225,16 @@ The sample scene is in [the app fixtures](../crates/app/examples/fixtures/hot-re
 
 Append `--shaders ./crates/render/src/scene` to watch the scene WGSL files. Edit the fragment in `primitive_classic.wgsl` when running with `RGINE_FORCE_CLASSIC=1`, or edit `primitive.wgsl` to change lighting in either binding mode. The app reports shader errors on stderr and keeps drawing with its last working pipelines. [ADR 0024](adr/0024-development-shader-reload.md) describes the pipeline update.
 
-To measure asset, scene and shader reload through the first changed frame on Linux, install `xvfb`, `xauth`, `mesa-vulkan-drivers` and `libxkbcommon-x11-0` on Ubuntu and run:
+To measure asset, scene and shader reload through the first changed frame on Windows, run in an interactive desktop session and keep the sample window visible.
+
+```powershell
+cargo build --locked -p engine-app --features hot-reload --example hot_reload
+$env:WGPU_BACKEND = 'dx12'
+$env:RGINE_FORCE_CLASSIC = '1'
+python .github/scripts/check-hot-reload.py target/debug/examples/hot_reload.exe
+```
+
+On Ubuntu, install `xvfb`, `xauth`, `mesa-vulkan-drivers` and `libxkbcommon-x11-0` and run:
 
 ```sh
 cargo build --locked -p engine-app --features hot-reload --example hot_reload

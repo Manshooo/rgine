@@ -200,6 +200,9 @@ fn source_error(path: &Path, error: impl std::fmt::Display) -> io::Error {
 }
 
 #[cfg(test)]
+mod phase3;
+
+#[cfg(test)]
 mod tests {
     use std::fs;
 
