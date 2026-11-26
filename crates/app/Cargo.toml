@@ -8,11 +8,13 @@ repository.workspace = true
 
 [features]
 hot-reload = ["dep:engine-scene", "engine-render/shader-reload"]
+physics = ["dep:engine-physics"]
 
 [dependencies]
 engine-asset.workspace = true
 engine-core.workspace = true
 engine-ecs.workspace = true
+engine-physics = { workspace = true, optional = true }
 engine-platform.workspace = true
 engine-render.workspace = true
 engine-scene = { workspace = true, optional = true }

@@ -12,9 +12,11 @@ const EDITOR_SIDE: &[&str] = &["engine-editor", "engine-devtools"];
 
 /// Backend crates, and the single workspace crate allowed to name each.
 ///
-/// ADR 0009 and ADR 0014 keep windowing and rendering backends replaceable.
-/// Extend the ownership table as the remaining backends land.
-const BACKEND_OWNERS: &[(&str, &str)] = &[("winit", "engine-platform"), ("wgpu", "engine-render")];
+const BACKEND_OWNERS: &[(&str, &str)] = &[
+    ("winit", "engine-platform"),
+    ("wgpu", "engine-render"),
+    ("rapier3d", "engine-physics"),
+];
 
 /// Proc-macro crates and their re-exporting owners (ADR 0011).
 const MACRO_OWNERS: &[(&str, &str)] = &[
@@ -235,6 +237,11 @@ mod tests {
                 "engine-render",
                 "crates/render/Cargo.toml",
                 &[dependency("wgpu", DependencyKind::Development)],
+            ),
+            krate(
+                "engine-physics",
+                "crates/physics/Cargo.toml",
+                &[dependency("rapier3d", DependencyKind::Normal)],
             ),
             krate(
                 "engine-app",

@@ -8,17 +8,20 @@
 
 pub use engine_core as core;
 pub use engine_ecs as ecs;
+pub use engine_ecs::Resources;
 pub use engine_platform as platform;
 pub use frames::BenchmarkReport;
 pub use frames::RenderError;
 pub use input_actions::{ActionBinding, ActionEvent, ActionState, InputActions, InputContext};
 pub use replay::{InputRecording, ReplayError};
-pub use simulation::{FixedStep, Resources, Simulation, StepContext};
+pub use simulation::{FixedStep, Simulation, StepContext};
 
 mod frames;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
 mod input_actions;
+#[cfg(feature = "physics")]
+pub mod physics;
 mod replay;
 pub mod scene;
 mod simulation;

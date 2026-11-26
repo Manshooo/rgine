@@ -39,6 +39,7 @@ engine-ecs = { path = "crates/ecs", version = "0.1.0" }
 engine-ecs-macros = { path = "crates/ecs-macros", version = "=0.1.0" }
 engine-platform = { path = "crates/platform", version = "0.1.0" }
 engine-render = { path = "crates/render", version = "0.1.0" }
+engine-physics = { path = "crates/physics", version = "0.1.0" }
 engine-app = { path = "crates/app", version = "0.1.0" }
 engine-asset = { path = "crates/asset", version = "0.1.0" }
 engine-scene = { path = "crates/scene", version = "0.1.0" }

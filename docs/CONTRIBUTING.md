@@ -151,7 +151,7 @@ Release:
 
 ### Minimum supported Rust version
 
-MSRV is `1.87`, recorded in `[workspace.package].rust-version` and checked by the `msrv` CI job. It is the minimum required by wgpu (ADR 0014).
+MSRV is `1.89`, recorded in `[workspace.package].rust-version` and checked by the `msrv` CI job. It is the minimum required by the current Rapier dependency graph (ADR 0026).
 
 Raising it is a deliberate `build(deps):` pull request that says which feature or dependency forced the bump - not a side effect of using something new. `rust-toolchain.toml` pins `stable` for day-to-day work; the two are different questions, and the MSRV job overrides the pin with `RUSTUP_TOOLCHAIN` so that it actually tests the older compiler.
 

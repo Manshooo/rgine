@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Apps can opt into fixed-step 3D physics with ECS bodies, box and sphere colliders, simulated poses, and contact and sensor events (ADR 0026).
 - Fixed-step systems can read game-defined input actions resolved through prioritized and modal contexts. UI can consume physical events before gameplay resolves them, and recorded input replays through the same routing (ADR 0025).
 - Development builds can reload scene WGSL in a running game. A shader error reports the affected source and keeps the last working pipelines.
 - Development builds can hot reload a static glTF prop, its external buffers, its optional KTX2 base color and its authored scene while the game is running.
@@ -74,6 +75,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 - `.github/rulesets/master-protect.json`, the branch ruleset as version-controlled data.
 
 ### Changed
+- The workspace requires Rust 1.89 for the Rapier dependency graph (ADR 0026).
 - The render graph executes only passes that contribute to exported outputs or are declared with side effects, along with their dependencies. Register externally observable work with `add_side_effect_pass` (ADR 0015).
 - The workspace minimum Rust version is 1.87 to support wgpu 30.0.2 (ADR 0014).
 - `World::get` returns a `ComponentRef` guard so the shared borrow stays active while the reference is in use. Dereference the guard or use `Option::as_deref()` at call sites that need `Option<&T>`.

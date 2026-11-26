@@ -77,6 +77,6 @@ These are checked by `cargo xtask check-deps` in CI, not stated as convention:
 
 - `editor` and `devtools` are not reachable from any runtime crate's dependency graph;
 - domain crates do not depend on `apps`;
-- a backend crate is named only by its owner. `engine-platform` owns `winit`, and `engine-render` owns `wgpu` (ADR 0009 and ADR 0014);
+- a backend crate is named only by its owner. `engine-platform` owns `winit`, `engine-render` owns `wgpu`, and `engine-physics` owns `rapier3d` (ADR 0009, ADR 0014 and ADR 0026);
 - a macro crate (`engine-core-macros` or `engine-ecs-macros`) is named only by the crate that owns it, per ADR 0011;
 - the public API surface and serialized schemas match their recorded snapshots, per ADR 0005 (not yet implemented; due with Phase 7).
