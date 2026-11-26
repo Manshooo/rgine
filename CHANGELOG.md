@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Games can load XML widget trees with reusable panels, labels, images and buttons in `engine-ui` (ADR 0028).
 - Kinematic bodies can follow prescribed movement and deflect dynamic bodies. Deflection Arena exercises this with cylinder colliders, bouncing projectiles and a modal Input Actions context.
 - Games can request collision-aware kinematic movement and read the grounded result (ADR 0027).
 - Apps can opt into fixed-step 3D physics with ECS bodies, box and sphere colliders, simulated poses, and contact and sensor events (ADR 0026).

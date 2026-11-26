@@ -73,6 +73,8 @@ Signal Run remains rgine's platformer proof of concept. After Phase 4, build an 
 
 2D support covers the screen-space game interface. `engine-ui` keeps a tree of widgets built from XML layouts and styled with a documented subset of CSS. The authoring workflow follows [Valve Panorama](https://www.dota2.com/reborn/part2).
 
+The [XML layout guide](game-ui-layout.md) documents widget declarations and panel reuse.
+
 - Layouts define reusable panels, labels, images and buttons. Styles define spacing, sizing, row and column layout, alignment, typography and interaction states. Layout adapts to the viewport and display scale.
 - UI widgets bind to data published by the game. Named actions from the layout are dispatched as typed Rust events. For example, the HUD reads the coin count, and the pause menu emits a resume action.
 - The game renders the UI over the 3D scene. UI handles pointer and touch input and keyboard focus. Input handled by a widget is kept out of gameplay controls.
@@ -80,7 +82,7 @@ Signal Run remains rgine's platformer proof of concept. After Phase 4, build an 
 
 ### Frame profiler
 
-Add an opt-in frame profiler during Phase 4. Use Deflection Arena to validate it and reuse the capture format for the later [iteration budgets](https://github.com/Manshooo/rgine/issues/108) and [Arcanists two-colony measurements](https://github.com/Manshooo/rgine/issues/148).
+Add an opt-in frame profiler at the end of Phase 4. Use Deflection Arena to validate it and reuse the capture format for the later [iteration budgets](https://github.com/Manshooo/rgine/issues/108) and [Arcanists two-colony measurements](https://github.com/Manshooo/rgine/issues/148).
 
 1. Record CPU timings for input, fixed steps (including physics and catch-up), scene extraction, render preparation, buffer uploads, command encoding, queue submit, surface acquisition and present. Include redraw requests, present outcomes and intervals between successful presents so pacing can be diagnosed alongside workload.
 2. Record GPU time per render graph pass where the adapter supports timestamp queries. Start with shadows and opaque rendering. Read results asynchronously and attach them to the original frame ID. Record unavailable or dropped GPU samples explicitly. [wgpu timestamp query example](https://wgpu.rs/doc/wgpu_examples/timestamp_queries/index.html)

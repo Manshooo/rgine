@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui>
+    <template name="coin-counter" class="counter compact">
+        <image id="icon" src="ui/coin.png" />
+        <label id="amount" text="Монеты &amp; очки" />
+        <button id="details" text="Details" />
+    </template>
+
+    <panel id="hud" class="hud">
+        <panel id="scoreboard">
+            <use id="player-one" template="coin-counter" class="left" />
+            <use id="player-two" template="coin-counter" class="right" />
+        </panel>
+        <button id="pause" text="Pause" />
+    </panel>
+</ui>
