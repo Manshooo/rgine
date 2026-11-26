@@ -21,6 +21,9 @@ impl SceneReferences<'_> {
 /// Why Truth could not be compiled into runtime data.
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError<E> {
+    /// Prefab links must be resolved against their sources before cooking.
+    #[error("resolve prefab instance {0} before compiling the scene")]
+    UnresolvedPrefab(ObjectId),
     /// The node count exceeds the capacity of scene indices.
     #[error("authored scene exceeds the capacity of 32-bit node indices")]
     TooManyNodes,
@@ -91,6 +94,9 @@ impl Truth<'_> {
         &self,
         mut compile_object: impl FnMut(ObjectId, &TruthObject, &SceneReferences<'_>) -> Result<T, E>,
     ) -> Result<SceneCompilation<T>, CompileError<E>> {
+        if let Some(object) = self.first_prefab() {
+            return Err(CompileError::UnresolvedPrefab(object));
+        }
         let objects = self.objects();
         if u32::try_from(objects.len()).is_err() {
             return Err(CompileError::TooManyNodes);

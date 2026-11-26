@@ -190,11 +190,7 @@ impl<'registry> Truth<'registry> {
                 truth.replace_property(
                     id,
                     field.name,
-                    Some(PropertyValue {
-                        type_id: field.type_id,
-                        type_name: field.type_name,
-                        data: data.trim_boxed().into(),
-                    }),
+                    Some(PropertyValue::from_raw(field, data.trim_boxed())),
                 );
             }
         }
@@ -246,7 +242,7 @@ fn scene_types(
     Ok(types)
 }
 
-fn unique_map<'de, D, K, V>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
+pub(super) fn unique_map<'de, D, K, V>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
 where
     D: Deserializer<'de>,
     K: Deserialize<'de> + Ord + fmt::Debug,

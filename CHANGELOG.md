@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Truth scenes can link prefab assets, persist per-node property overrides, and resolve inherited hierarchy and references before compilation.
 - `engine-scene` compiles Truth into deterministic runtime scenes with hierarchy and references. Shipped games can load compiled scenes with the `authoring` feature disabled.
 - `engine-scene` saves and opens versioned RON scenes with stable node IDs, hierarchies and authored references.
 - `engine-scene` stores reflected authoring objects and stable references in Truth. Its journal can rewind object creation, reparenting, property edits and subtree deletion (ADR 0004).

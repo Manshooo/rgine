@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 mod persistence;
+mod prefab;
 
 pub use persistence::{SceneError, SceneTypeName};
+pub use prefab::{PrefabError, PrefabInstance, register_prefabs};
 
 /// Stable GUID of an authored object within its scene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -55,6 +57,14 @@ pub struct PropertyValue {
 }
 
 impl PropertyValue {
+    fn from_raw(field: &Field, data: Box<RawValue>) -> Self {
+        Self {
+            type_id: field.type_id,
+            type_name: field.type_name,
+            data: data.into(),
+        }
+    }
+
     /// Reads the snapshot as the field's original Rust type.
     pub fn read<T: DeserializeOwned + 'static>(&self) -> Result<T, TruthError> {
         if self.type_id != TypeId::of::<T>() {
@@ -68,7 +78,7 @@ impl PropertyValue {
 }
 
 /// One object in Truth, with optional field values from its registered struct.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TruthObject {
     type_key: TypeKey,
     parent: Option<ObjectId>,
@@ -121,6 +131,13 @@ pub enum Change {
         type_key: TypeKey,
         /// Parent assigned at creation.
         parent: Option<ObjectId>,
+    },
+    /// Placement of a prefab instance at the given location.
+    PrefabCreated {
+        /// Parent assigned at creation.
+        parent: Option<ObjectId>,
+        /// Source and initial local overrides for the instance.
+        instance: PrefabInstance,
     },
     /// Change to a parent relationship.
     Reparented {
@@ -244,12 +261,7 @@ impl<'registry> Truth<'registry> {
         id: ObjectId,
         parent: Option<ObjectId>,
     ) -> Result<(), TruthError> {
-        if self.objects.contains_key(&id) {
-            return Err(TruthError::DuplicateObject(id));
-        }
-        if let Some(parent) = parent {
-            self.require_object(parent)?;
-        }
+        self.validate_new_object(id, parent)?;
         let registration = self
             .registry
             .get::<T>()
@@ -262,18 +274,42 @@ impl<'registry> Truth<'registry> {
             return Err(TruthError::UnsupportedType(registration.name()));
         }
         let type_key = registration.key();
+        self.insert_object(id, type_key, parent, BTreeMap::new());
+        self.record(id, Change::Created { type_key, parent });
+        Ok(())
+    }
+
+    fn validate_new_object(
+        &self,
+        id: ObjectId,
+        parent: Option<ObjectId>,
+    ) -> Result<(), TruthError> {
+        if self.objects.contains_key(&id) {
+            return Err(TruthError::DuplicateObject(id));
+        }
+        if let Some(parent) = parent {
+            self.require_object(parent)?;
+        }
+        Ok(())
+    }
+
+    fn insert_object(
+        &mut self,
+        id: ObjectId,
+        type_key: TypeKey,
+        parent: Option<ObjectId>,
+        properties: BTreeMap<&'static str, PropertyValue>,
+    ) {
         self.objects.insert(
             id,
             TruthObject {
                 type_key,
                 parent,
                 children: BTreeSet::new(),
-                properties: BTreeMap::new(),
+                properties,
             },
         );
         self.attach(id, parent);
-        self.record(id, Change::Created { type_key, parent });
-        Ok(())
     }
 
     /// Changes a parent relationship, checking for missing objects and cycles.
@@ -294,18 +330,8 @@ impl<'registry> Truth<'registry> {
         name: &str,
         value: &T,
     ) -> Result<(), TruthError> {
-        let field = self.field(id, name)?;
-        if field.type_id != TypeId::of::<T>() {
-            return Err(TruthError::PropertyType {
-                expected: field.type_name,
-                actual: type_name::<T>(),
-            });
-        }
-        let snapshot = PropertyValue {
-            type_id: field.type_id,
-            type_name: field.type_name,
-            data: RawValue::from_rust(value)?.into(),
-        };
+        let (field, data) = self.encode_property(id, name, value)?;
+        let snapshot = PropertyValue::from_raw(field, data);
         self.edit_property(id, field.name, Some(snapshot));
         Ok(())
     }
@@ -344,7 +370,7 @@ impl<'registry> Truth<'registry> {
         while self.journal.len() > len {
             let JournalEntry { object, change } = self.journal.pop().expect("entry exists");
             match change {
-                Change::Created { parent, .. } => {
+                Change::Created { parent, .. } | Change::PrefabCreated { parent, .. } => {
                     self.detach(object, parent);
                     self.objects.remove(&object);
                 }
@@ -363,6 +389,22 @@ impl<'registry> Truth<'registry> {
 
     fn require_object(&self, id: ObjectId) -> Result<&TruthObject, TruthError> {
         self.object(id).ok_or(TruthError::MissingObject(id))
+    }
+
+    fn encode_property<T: Serialize + 'static>(
+        &self,
+        id: ObjectId,
+        name: &str,
+        value: &T,
+    ) -> Result<(&'registry Field, Box<RawValue>), TruthError> {
+        let field = self.field(id, name)?;
+        if field.type_id != TypeId::of::<T>() {
+            return Err(TruthError::PropertyType {
+                expected: field.type_name,
+                actual: type_name::<T>(),
+            });
+        }
+        Ok((field, RawValue::from_rust(value)?))
     }
 
     fn field(&self, id: ObjectId, name: &str) -> Result<&'registry Field, TruthError> {
