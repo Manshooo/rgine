@@ -7,6 +7,7 @@ use engine_ecs::Entity;
 use rapier3d::control::KinematicCharacterController;
 use rapier3d::prelude as rapier;
 
+use crate::kinematic::KinematicRequest;
 use crate::{
     BodyKind, Changes, Collider, ColliderShape, ContactEvent, KinematicMove, PhysicsPose, RigidBody,
 };
@@ -71,8 +72,11 @@ impl Backend {
                 BodyKind::Kinematic => rapier::RigidBodyBuilder::kinematic_position_based(),
             };
             handles.body = Some(
-                self.world
-                    .insert_body(builder.pose(to_backend_pose(body.initial_pose))),
+                self.world.insert_body(
+                    builder
+                        .pose(to_backend_pose(body.initial_pose))
+                        .linvel(rapier::Vector::from_array(body.initial_velocity.to_array())),
+                ),
             );
         }
         if let (None, Some(collider)) = (handles.collider, collider) {
@@ -81,9 +85,14 @@ impl Backend {
                     rapier::ColliderBuilder::cuboid(size.x, size.y, size.z)
                 }
                 ColliderShape::Sphere(radius) => rapier::ColliderBuilder::ball(radius),
+                ColliderShape::CylinderY {
+                    half_height,
+                    radius,
+                } => rapier::ColliderBuilder::cylinder(half_height, radius),
             };
             let builder = builder
                 .position(to_backend_pose(collider.pose))
+                .restitution(collider.restitution)
                 .sensor(collider.sensor)
                 .active_events(rapier::ActiveEvents::COLLISION_EVENTS);
             let handle = self.world.insert_collider(builder, handles.body);
@@ -106,7 +115,7 @@ impl Backend {
     pub(super) fn move_kinematic(
         &mut self,
         entity: Entity,
-        translation: Vec3,
+        request: KinematicRequest,
         up: Vec3,
         seconds: f32,
     ) -> Option<KinematicMove> {
@@ -118,6 +127,30 @@ impl Backend {
             return None;
         }
 
+        let (translation, grounded) = match request {
+            KinematicRequest::Direct(translation) => {
+                (rapier::Vector::from_array(translation.to_array()), false)
+            }
+            KinematicRequest::Sweep(translation) => {
+                self.sweep(body_handle, collider, translation, up, seconds)
+            }
+        };
+        let next = body.translation() + translation;
+        self.world.bodies[body_handle].set_next_kinematic_translation(next);
+        Some(KinematicMove {
+            translation: Vec3::from_array(translation.to_array()),
+            grounded,
+        })
+    }
+
+    fn sweep(
+        &self,
+        body_handle: rapier::RigidBodyHandle,
+        collider: &rapier::Collider,
+        translation: Vec3,
+        up: Vec3,
+        seconds: f32,
+    ) -> (rapier::Vector, bool) {
         let query = self.world.query_pipeline_with_filter(
             rapier::QueryFilter::default()
                 .exclude_rigid_body(body_handle)
@@ -136,12 +169,7 @@ impl Backend {
             rapier::Vector::from_array(translation.to_array()),
             |_| {},
         );
-        let next = body.translation() + movement.translation;
-        self.world.bodies[body_handle].set_next_kinematic_translation(next);
-        Some(KinematicMove {
-            translation: Vec3::from_array(movement.translation.to_array()),
-            grounded: movement.grounded,
-        })
+        (movement.translation, movement.grounded)
     }
 
     pub(super) fn step(&mut self, seconds: f32) {

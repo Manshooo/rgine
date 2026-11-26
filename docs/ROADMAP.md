@@ -78,6 +78,17 @@ Signal Run remains rgine's platformer proof of concept. After Phase 4, build an 
 - The game renders the UI over the 3D scene. UI handles pointer and touch input and keyboard focus. Input handled by a widget is kept out of gameplay controls.
 - Layouts and styles are assets that reload during development. A failed reload reports the source error and keeps the last valid UI active.
 
+### Frame profiler
+
+Add an opt-in frame profiler during Phase 4. Use Deflection Arena to validate it and reuse the capture format for the later [iteration budgets](https://github.com/Manshooo/rgine/issues/108) and [Arcanists two-colony measurements](https://github.com/Manshooo/rgine/issues/148).
+
+1. Record CPU timings for input, fixed steps (including physics and catch-up), scene extraction, render preparation, buffer uploads, command encoding, queue submit, surface acquisition and present. Include redraw requests, present outcomes and intervals between successful presents so pacing can be diagnosed alongside workload.
+2. Record GPU time per render graph pass where the adapter supports timestamp queries. Start with shadows and opaque rendering. Read results asynchronously and attach them to the original frame ID. Record unavailable or dropped GPU samples explicitly. [wgpu timestamp query example](https://wgpu.rs/doc/wgpu_examples/timestamp_queries/index.html)
+3. Record per-pass draw calls, instances, triangles and pipeline or bind group changes. Record uploaded bytes and newly created pipelines per frame. Include the build profile, adapter, backend, binding mode, drawable size and present mode with each capture.
+4. Export a bounded capture with named CPU and GPU ranges and a summary of median, p95 and p99 frame times. Use a trace viewer to inspect spikes and correlate the ranges and counters by frame ID. Collect samples in app and render and keep trace inspection in devtools.
+
+The initial Windows DX12 test uses a fixed Deflection Arena replay at the same resolution and settings. Compare the original HUD, the same glyph geometry batched by material and the arena with text hidden. The original debug comparison went from 26 FPS with 599 objects to 60 FPS with 34 while hiding text. The batched case holds the glyph geometry constant while reducing draw submissions and per-object setup. The capture should show where the difference appears in CPU preparation and encoding, GPU pass time and presentation pacing. Measure profiler overhead in separate disabled, CPU-only and CPU plus GPU runs.
+
 ## Phase 5. Editor
 Hierarchy, Inspector, Viewport, gizmos, selection, Asset Browser, Console, Undo/Redo, isolated Play World.
 

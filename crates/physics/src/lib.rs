@@ -14,6 +14,7 @@ use engine_core::glam::{Quat, Vec3};
 use engine_ecs::{Commands, Component, Entity, World};
 
 use backend::Backend;
+use kinematic::KinematicRequest;
 pub use kinematic::{KinematicMotion, KinematicMove};
 
 /// The version of the physics crate.
@@ -65,6 +66,7 @@ pub enum BodyKind {
 pub struct RigidBody {
     kind: BodyKind,
     initial_pose: PhysicsPose,
+    initial_velocity: Vec3,
 }
 
 impl RigidBody {
@@ -77,7 +79,28 @@ impl RigidBody {
     #[must_use]
     pub fn new(kind: BodyKind, initial_pose: PhysicsPose) -> Self {
         initial_pose.assert_valid();
-        Self { kind, initial_pose }
+        Self {
+            kind,
+            initial_pose,
+            initial_velocity: Vec3::ZERO,
+        }
+    }
+
+    /// Sets the initial world-space linear velocity of a dynamic body.
+    ///
+    /// # Panics
+    ///
+    /// If the body is not dynamic or the velocity is non-finite.
+    #[must_use]
+    pub fn with_linear_velocity(mut self, velocity: Vec3) -> Self {
+        assert_eq!(
+            self.kind,
+            BodyKind::Dynamic,
+            "velocity requires a dynamic body"
+        );
+        assert!(velocity.is_finite(), "body velocity must be finite");
+        self.initial_velocity = velocity;
+        self
     }
 }
 
@@ -88,6 +111,13 @@ pub enum ColliderShape {
     Cuboid(Vec3),
     /// Sphere radius.
     Sphere(f32),
+    /// Cylinder centered on its local Y axis.
+    CylinderY {
+        /// Half the height along the cylinder axis.
+        half_height: f32,
+        /// Radius perpendicular to the axis.
+        radius: f32,
+    },
 }
 
 /// Construction data for one collider. Remove and reinsert to rebuild it.
@@ -97,6 +127,7 @@ pub struct Collider {
     shape: ColliderShape,
     pose: PhysicsPose,
     sensor: bool,
+    restitution: f32,
 }
 
 impl Collider {
@@ -113,6 +144,10 @@ impl Collider {
         let dimensions = match shape {
             ColliderShape::Cuboid(half_extents) => half_extents,
             ColliderShape::Sphere(radius) => Vec3::splat(radius),
+            ColliderShape::CylinderY {
+                half_height,
+                radius,
+            } => Vec3::new(radius, half_height, radius),
         };
         assert!(
             dimensions.is_finite() && dimensions.min_element() > 0.0,
@@ -122,7 +157,23 @@ impl Collider {
             shape,
             pose,
             sensor,
+            restitution: 0.0,
         }
+    }
+
+    /// Sets how much relative speed is preserved when this collider bounces.
+    ///
+    /// # Panics
+    ///
+    /// If the coefficient is outside the inclusive range zero to one.
+    #[must_use]
+    pub fn with_restitution(mut self, coefficient: f32) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&coefficient),
+            "restitution must be in [0, 1]"
+        );
+        self.restitution = coefficient;
+        self
     }
 }
 
@@ -229,13 +280,13 @@ impl PhysicsWorld {
         world
             .query::<&mut KinematicMotion>()
             .for_each(|entity, motion| {
-                motion.result = motion.requested.take().and_then(|translation| {
-                    if refresh_queries {
+                motion.result = motion.requested.take().and_then(|request| {
+                    if refresh_queries && matches!(request, KinematicRequest::Sweep(_)) {
                         self.backend.refresh_queries();
                         refresh_queries = false;
                     }
                     self.backend
-                        .move_kinematic(entity, translation, motion.up, seconds)
+                        .move_kinematic(entity, request, motion.up, seconds)
                 });
             });
         self.backend.step(seconds);

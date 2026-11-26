@@ -8,8 +8,14 @@ use engine_ecs::Component;
 #[derive(Component, Debug)]
 pub struct KinematicMotion {
     pub(super) up: Vec3,
-    pub(super) requested: Option<Vec3>,
+    pub(super) requested: Option<KinematicRequest>,
     pub(super) result: Option<KinematicMove>,
+}
+
+#[derive(Debug)]
+pub(super) enum KinematicRequest {
+    Sweep(Vec3),
+    Direct(Vec3),
 }
 
 impl Default for KinematicMotion {
@@ -48,7 +54,22 @@ impl KinematicMotion {
             translation.is_finite(),
             "kinematic translation must be finite"
         );
-        self.requested = Some(translation);
+        self.requested = Some(KinematicRequest::Sweep(translation));
+    }
+
+    /// Prescribes a world-space displacement for the next fixed step.
+    /// Dynamic bodies respond to contacts with the moving body. The caller
+    /// supplies any travel limits for the kinematic body.
+    ///
+    /// # Panics
+    ///
+    /// If the displacement is non-finite.
+    pub fn request_direct_translation(&mut self, translation: Vec3) {
+        assert!(
+            translation.is_finite(),
+            "kinematic translation must be finite"
+        );
+        self.requested = Some(KinematicRequest::Direct(translation));
     }
 
     /// Returns the last step's movement, if a request was applied to a
@@ -62,8 +83,8 @@ impl KinematicMotion {
 /// The result of one collision-aware translation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KinematicMove {
-    /// World-space displacement after sliding along obstacles.
+    /// World-space displacement applied to the body.
     pub translation: Vec3,
-    /// Whether the shape reaches a supporting surface at the end of the move.
+    /// Whether a swept move ends on a supporting surface.
     pub grounded: bool,
 }

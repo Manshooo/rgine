@@ -31,3 +31,8 @@ crate-type = ["cdylib"]
 [[example]]
 name = "hot_reload"
 required-features = ["hot-reload"]
+
+[[example]]
+name = "deflection_arena"
+required-features = ["physics"]
+test = true
