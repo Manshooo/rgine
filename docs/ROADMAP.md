@@ -91,9 +91,11 @@ The initial Windows DX12 test uses a fixed Deflection Arena replay at the same r
 
 ### Signal Run v2 after Phase 4
 
-After Phase 4 closes, rebuild [Signal Run](https://github.com/Manshooo/signal-run) as the 3D platformer that evaluates the completed engine features. Keep its seven-platform, five-coin level as the comparison route. Use fixed-step Rapier movement and interpolation, keyboard and touch input actions, and an XML/CSS HUD and pause menu with live bindings.
+After Phase 4 closes, rebuild [Signal Run](https://github.com/Manshooo/signal-run) as the 3D platformer that evaluates the completed engine features. Build two larger levels with multiple platforming sections, collectibles and checkpoints. Expand the original level into the first route and create a distinct second route of comparable scope. Keep the original seven-platform, five-coin segment available for comparison with v1.
 
-Run the route on desktop and Android. Verify checkpoints, respawn, pause and finish, and measure frame pacing and the time for gameplay tuning and UI edits to appear in the running game. Record the game and engine revisions, the comparison with v1 and any gaps exposed by the migration. [Signal Run v2 evaluation plan](https://github.com/Manshooo/rgine/issues/180).
+Use fixed-step Rapier movement and interpolation, keyboard and touch input actions, and XML/CSS screens for the main menu, level selection, HUD, pause and results. Both levels can be selected from the menu. Players can restart a run or return to level selection from pause or results.
+
+Play both levels on desktop and Android. Verify the menu flow, checkpoints, respawn, pause and finish, and measure frame pacing and the time for gameplay tuning and UI edits to appear in the running game. Record the game and engine revisions, the comparison with v1 and any gaps exposed by the migration. [Signal Run v2 evaluation plan](https://github.com/Manshooo/rgine/issues/180).
 
 ## Phase 5. Editor
 Hierarchy, Inspector, Viewport, gizmos, selection, Asset Browser, Console, Undo/Redo, isolated Play World.
