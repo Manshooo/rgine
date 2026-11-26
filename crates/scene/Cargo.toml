@@ -16,7 +16,7 @@ engine-ecs.workspace = true
 ron = { version = "0.10", optional = true }
 serde.workspace = true
 thiserror = "2"
-uuid = { version = "1", features = ["v4", "serde"], optional = true }
+uuid = { version = "1", features = ["v4", "v5", "serde"], optional = true }
 
 [dev-dependencies]
 ron = "0.10"

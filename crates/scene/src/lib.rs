@@ -14,8 +14,8 @@ pub use compiler::AuthoringTrace;
 pub use compiler::{CompileError, SceneCompilation, SceneReferences};
 #[cfg(feature = "authoring")]
 pub use truth::{
-    Change, JournalEntry, ObjectId, PropertyValue, SceneError, SceneTypeName, Truth, TruthError,
-    TruthObject,
+    Change, JournalEntry, ObjectId, PrefabError, PrefabInstance, PropertyValue, SceneError,
+    SceneTypeName, Truth, TruthError, TruthObject, register_prefabs,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
