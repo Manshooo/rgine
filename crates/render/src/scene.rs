@@ -277,6 +277,57 @@ impl Mesh {
         mesh
     }
 
+    /// A unit-height cylinder with diameter one, centered on its local Y axis.
+    pub fn cylinder() -> Self {
+        const SEGMENTS: u32 = 48;
+        let mut vertices = Vec::with_capacity((10 * SEGMENTS) as usize);
+        let mut indices = Vec::with_capacity((12 * SEGMENTS) as usize);
+        let radial = |segment| {
+            let (z, x) = (segment as f32 * std::f32::consts::TAU / SEGMENTS as f32).sin_cos();
+            Vec3::new(x, 0.0, z)
+        };
+        for segment in 0..SEGMENTS {
+            let a = radial(segment);
+            let b = radial(segment + 1);
+            let top = Vec3::Y * 0.5;
+            let bottom = -top;
+            let first = vertices.len() as u32;
+            let u = segment as f32 / SEGMENTS as f32;
+            let next_u = (segment + 1) as f32 / SEGMENTS as f32;
+            for (position, normal, uv) in [
+                (a * 0.5 + bottom, a, [u, 1.0]),
+                (a * 0.5 + top, a, [u, 0.0]),
+                (b * 0.5 + top, b, [next_u, 0.0]),
+                (b * 0.5 + bottom, b, [next_u, 1.0]),
+            ] {
+                vertices.push(Vertex {
+                    position,
+                    normal,
+                    uv,
+                });
+            }
+            indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+
+            for (center, normal, rim) in [(top, Vec3::Y, [b, a]), (bottom, Vec3::NEG_Y, [a, b])] {
+                let first = vertices.len() as u32;
+                for local in [Vec3::ZERO, rim[0] * 0.5, rim[1] * 0.5] {
+                    vertices.push(Vertex {
+                        position: center + local,
+                        normal,
+                        uv: [local.x + 0.5, local.z + 0.5],
+                    });
+                }
+                indices.extend([first, first + 1, first + 2]);
+            }
+        }
+        Self {
+            vertices,
+            indices,
+            surface: MaterialTexture::Solid,
+            material: None,
+        }
+    }
+
     /// A smooth sphere of diameter one centered at the origin.
     pub fn sphere() -> Self {
         const RINGS: u32 = 24;

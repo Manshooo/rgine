@@ -213,6 +213,22 @@ The command validates the manifest and authored scene and prefab files before wr
 
 Run the command against a migrated project to verify that it is up to date. This returns success without creating a copy. See [ADR 0021](adr/0021-authored-scene-migration.md) for the supported scene versions.
 
+## Try Deflection Arena
+
+```sh
+cargo run --locked -p engine-app --features physics --example deflection_arena
+```
+
+Use WASD or the arrow keys to move the disc. When an incoming ball enters the central ring, press Space to strike. A strike lasts eight fixed steps. It uses the held movement direction or aims at the nearest incoming ball. A timed contact inside the ring scores a hit, and the ball turns green.
+
+To exercise the modal input context, hold S while pressing Esc. The disc and balls freeze and Resume stays selected. Release and press S again to select Restart. W selects Resume. Space or Enter confirms and Esc closes the menu. A movement key held through the transition takes effect after a fresh press.
+
+```sh
+cargo test --locked -p engine-app --features physics --example deflection_arena
+```
+
+The tests verify a physical rebound, an early strike, the pause and restart controls, and replay of recorded input in the same fixed schedule.
+
 ## Reload an authored prop during development
 
 Copy the sample scene and the glTF fixture with its external buffer to a working directory. Run the example with the paths to those copies.
