@@ -73,7 +73,7 @@ Signal Run remains rgine's platformer proof of concept. After Phase 4, build an 
 
 2D support covers the screen-space game interface. `engine-ui` keeps a tree of widgets built from XML layouts and styled with a documented subset of CSS. The authoring workflow follows [Valve Panorama](https://www.dota2.com/reborn/part2).
 
-The [XML layout guide](game-ui-layout.md) documents widget declarations and panel reuse.
+The [XML layout guide](game-ui-layout.md) documents widget declarations and panel reuse. The [stylesheet guide](game-ui-styles.md) defines selectors, cascade and computed style values.
 
 - Layouts define reusable panels, labels, images and buttons. Styles define spacing, sizing, row and column layout, alignment, typography and interaction states. Layout adapts to the viewport and display scale.
 - UI widgets bind to data published by the game. Named actions from the layout are dispatched as typed Rust events. For example, the HUD reads the coin count, and the pause menu emits a resume action.
