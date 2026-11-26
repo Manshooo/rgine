@@ -15,7 +15,8 @@ pub use compiler::{CompileError, SceneCompilation, SceneReferences};
 #[cfg(feature = "authoring")]
 pub use truth::{
     Change, JournalEntry, ObjectId, PrefabError, PrefabInstance, PropertyValue, SceneError,
-    SceneTypeName, Truth, TruthError, TruthObject, register_prefabs,
+    SceneMergeError, SceneTypeName, Truth, TruthError, TruthObject, merge_scene_ron,
+    register_prefabs,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

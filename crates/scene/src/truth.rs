@@ -13,9 +13,11 @@ use ron::value::RawValue;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
+mod merge;
 mod persistence;
 mod prefab;
 
+pub use merge::{SceneMergeError, merge_scene_ron};
 pub use persistence::{SceneError, SceneTypeName};
 pub use prefab::{PrefabError, PrefabInstance, register_prefabs};
 

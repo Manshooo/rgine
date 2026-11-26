@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The Git merge driver combines independent RON scene and prefab edits by object UUID and field, and reports conflicts with the affected object and field.
 - Truth scenes can link prefab assets, persist per-node property overrides, and resolve inherited hierarchy and references before compilation.
 - `engine-scene` compiles Truth into deterministic runtime scenes with hierarchy and references. Shipped games can load compiled scenes with the `authoring` feature disabled.
 - `engine-scene` saves and opens versioned RON scenes with stable node IDs, hierarchies and authored references.

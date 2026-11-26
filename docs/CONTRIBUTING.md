@@ -186,3 +186,19 @@ A change is done when:
 Line endings are governed by `.gitattributes`: LF in the repository and in the working tree on every platform, regardless of local `core.autocrlf`. Do not override it.
 
 `Cargo.lock` is committed. The workspace produces binaries, and CI builds with `--locked`, so an unlocked dependency graph would make builds non-reproducible. Dependency bumps are a deliberate `build(deps):` pull request, not a side effect of someone's local build.
+
+## Scene merge driver
+
+Install the CLI, then register the driver in each checkout. The command below uses the installed `engine-cli` on your PATH.
+
+```sh
+cargo install --path crates/engine-cli --locked
+git config --local merge.rgine.name "rgine scene merge"
+git config --local merge.rgine.driver 'engine-cli merge %O %A %B %P'
+```
+
+The repository assigns this driver to `*.scene.ron` and `*.prefab.ron`. A merge combines edits to separate fields or nodes and checks the resulting parent hierarchy. Each property is compared as a whole RON value, including structured properties such as prefab placements.
+
+A conflict reports the object UUID and affected field when available. Git retains the common, current and incoming versions in its index, and the working-tree file retains the current version. Inspect the inputs with `git show ':1:<path>'`, `git show ':2:<path>'` and `git show ':3:<path>'`. Edit the working-tree RON and stage the result with `git add -- <path>`.
+
+See the [Git merge driver documentation](https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver) for the driver placeholders.

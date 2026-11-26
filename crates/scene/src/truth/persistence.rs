@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::{ObjectId, PropertyValue, Truth, TruthError, TruthObject, TypeShape};
 
-const SCENE_VERSION: u32 = 1;
+pub(super) const SCENE_VERSION: u32 = 1;
 
 /// Stable persisted name for a reflected struct used in a scene.
 ///
@@ -81,26 +81,41 @@ struct VersionHeader {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SceneFile<T> {
-    schema_version: u32,
+pub(super) struct SceneFile<T> {
+    pub(super) schema_version: u32,
     #[serde(
         deserialize_with = "unique_map",
         bound(deserialize = "T: Deserialize<'de>")
     )]
-    objects: BTreeMap<ObjectId, SavedObject<T>>,
+    pub(super) objects: BTreeMap<ObjectId, SavedObject<T>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SavedObject<T> {
-    type_name: String,
-    type_version: u32,
-    parent: Option<ObjectId>,
+pub(super) struct SavedObject<T> {
+    pub(super) type_name: String,
+    pub(super) type_version: u32,
+    pub(super) parent: Option<ObjectId>,
     #[serde(
         deserialize_with = "unique_map",
         bound(deserialize = "T: Deserialize<'de>")
     )]
-    properties: BTreeMap<String, T>,
+    pub(super) properties: BTreeMap<String, T>,
+}
+
+pub(super) fn read_scene(text: &str) -> Result<SceneFile<Box<RawValue>>, SceneError> {
+    // Read the version independently so a future layout can still report its version.
+    let VersionHeader { schema_version } = ron::from_str(text)?;
+    if schema_version != SCENE_VERSION {
+        return Err(SceneError::UnsupportedVersion(schema_version));
+    }
+    ron::from_str(text).map_err(Into::into)
+}
+
+pub(super) fn write_scene<T: Serialize>(scene: &SceneFile<T>) -> Result<String, ron::Error> {
+    let mut text = ron::ser::to_string_pretty(scene, PrettyConfig::default().new_line("\n"))?;
+    text.push('\n');
+    Ok(text)
 }
 
 impl<'registry> Truth<'registry> {
@@ -136,9 +151,7 @@ impl<'registry> Truth<'registry> {
             schema_version: SCENE_VERSION,
             objects,
         };
-        let mut text = ron::ser::to_string_pretty(&scene, PrettyConfig::default().new_line("\n"))?;
-        text.push('\n');
-        Ok(text)
+        Ok(write_scene(&scene)?)
     }
 
     /// Reads a RON authoring snapshot against the supplied registry.
@@ -147,12 +160,8 @@ impl<'registry> Truth<'registry> {
     /// are decoded as their declared Rust types when read. The loaded scene starts a new journal
     /// and preserves authored object and asset references, including unresolved ones.
     pub fn from_ron(registry: &'registry TypeRegistry, text: &str) -> Result<Self, SceneError> {
-        // Read the version independently so a future layout can still report its version.
-        let VersionHeader { schema_version } = ron::from_str(text)?;
-        if schema_version != SCENE_VERSION {
-            return Err(SceneError::UnsupportedVersion(schema_version));
-        }
-        let scene: SceneFile<Box<RawValue>> = ron::from_str(text)?;
+        let scene = read_scene(text)?;
+        let mut children = scene.children()?;
         let types = scene_types(registry)?;
         let mut truth = Self::new(registry);
         for (id, saved) in scene.objects {
@@ -181,7 +190,7 @@ impl<'registry> Truth<'registry> {
                 TruthObject {
                     type_key: registration.key(),
                     parent: saved.parent,
-                    children: BTreeSet::new(),
+                    children: children.remove(&id).unwrap_or_default(),
                     properties: BTreeMap::new(),
                 },
             );
@@ -194,19 +203,20 @@ impl<'registry> Truth<'registry> {
                 );
             }
         }
-        truth.restore_hierarchy()?;
         Ok(truth)
     }
+}
 
-    fn restore_hierarchy(&mut self) -> Result<(), SceneError> {
-        let edges: Vec<_> = self.objects().map(|(id, node)| (id, node.parent)).collect();
+impl<T> SceneFile<T> {
+    pub(super) fn children(&self) -> Result<BTreeMap<ObjectId, BTreeSet<ObjectId>>, SceneError> {
+        let mut children = BTreeMap::<_, BTreeSet<_>>::new();
         let mut pending = Vec::new();
-        for (object, parent) in edges {
-            if let Some(parent) = parent {
+        for (&object, node) in &self.objects {
+            if let Some(parent) = node.parent {
                 if !self.objects.contains_key(&parent) {
                     return Err(SceneError::MissingParent { object, parent });
                 }
-                self.attach(object, Some(parent));
+                children.entry(parent).or_default().insert(object);
             } else {
                 pending.push(object);
             }
@@ -215,12 +225,12 @@ impl<'registry> Truth<'registry> {
         let mut unvisited: BTreeSet<_> = self.objects.keys().copied().collect();
         while let Some(id) = pending.pop() {
             unvisited.remove(&id);
-            pending.extend(self.objects[&id].children());
+            pending.extend(children.get(&id).into_iter().flatten().copied());
         }
         if let Some(id) = unvisited.first() {
             return Err(SceneError::CyclicHierarchy(*id));
         }
-        Ok(())
+        Ok(children)
     }
 }
 

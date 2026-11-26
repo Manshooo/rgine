@@ -459,6 +459,8 @@ name = "engine-cli"
 version = "0.1.0"
 dependencies = [
  "engine-app",
+ "engine-scene",
+ "tempfile",
 ]
 
 [[package]]

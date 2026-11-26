@@ -55,11 +55,6 @@ Cargo.lock text linguist-generated=true
 # Keeps documentation out of the repository language statistics.
 docs/**  linguist-documentation
 
-# Scene and prefab merges go through the engine merge driver once it exists
-# (ROADMAP phase 3, ADR 0004). Until then RON files merge as ordinary text.
-# The line to enable it will be:
-#   *.scene.ron  merge=rgine
-#   *.prefab.ron merge=rgine
-# together with, in each clone:
-#   git config merge.rgine.name "rgine scene merge"
-#   git config merge.rgine.driver "cargo run -p engine-cli -- merge %O %A %B %P"
+# Register the driver in each clone as described in docs/CONTRIBUTING.md.
+*.scene.ron  merge=rgine
+*.prefab.ron merge=rgine
