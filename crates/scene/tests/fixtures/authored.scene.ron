@@ -1,9 +1,11 @@
 (
-    schema_version: 1,
+    schema_version: 2,
     objects: {
         "00000000-0000-0000-0000-000000000001": (
-            type_name: "test.node",
-            type_version: 2,
+            object_type: (
+                name: "test.node",
+                version: 2,
+            ),
             parent: Some("00000000-0000-0000-0000-000000000002"),
             properties: {
                 "asset": "00000000-0000-0000-0000-000000000064",
@@ -12,8 +14,10 @@
             },
         ),
         "00000000-0000-0000-0000-000000000002": (
-            type_name: "test.node",
-            type_version: 2,
+            object_type: (
+                name: "test.node",
+                version: 2,
+            ),
             parent: None,
             properties: {
                 "target": Some("00000000-0000-0000-0000-000000000001"),

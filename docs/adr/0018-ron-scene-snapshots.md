@@ -13,4 +13,4 @@ The writer orders objects by UUID and properties by name. Opening a scene rebuil
 
 ## Compatibility
 
-The reader reports unsupported document and reflected type versions. Version 1 is the first scene format. Future version changes follow the migration policy in [ADR 0002](0002-persistent-data.md) and [ADR 0005](0005-compatibility-policy.md). The [version 1 fixture](../../crates/scene/tests/fixtures/authored.scene.ron) records the canonical layout.
+The reader reports unsupported document and reflected type versions. Version 1 is the first scene format. Future version changes follow the migration policy in [ADR 0002](0002-persistent-data.md) and [ADR 0005](0005-compatibility-policy.md). The [version 1 fixture](../../crates/scene/tests/fixtures/authored-v1.scene.ron) records the original layout. [ADR 0021](0021-authored-scene-migration.md) describes the conversion to v2.

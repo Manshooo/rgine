@@ -70,15 +70,9 @@ fn read_input(
         side,
         source: Box::new(source),
     };
-    let mut scene = read_scene(text).map_err(invalid)?;
+    let (_, mut scene) = read_scene(text).map_err(invalid)?;
     scene.children().map_err(invalid)?;
-    for object in scene.objects.values_mut() {
-        let properties = std::mem::take(&mut object.properties);
-        object.properties = properties
-            .into_iter()
-            .map(|(name, value)| (name, value.trim_boxed()))
-            .collect();
-    }
+    scene.trim_properties();
     Ok(scene.objects)
 }
 
@@ -96,10 +90,7 @@ fn merge_node(
         return Err(conflict("object existence or creation".into()));
     };
     // A type or version change can alter the meaning of all fields.
-    if (ours.type_name.as_str(), ours.type_version) != (base.type_name.as_str(), base.type_version)
-        || (theirs.type_name.as_str(), theirs.type_version)
-            != (base.type_name.as_str(), base.type_version)
-    {
+    if ours.object_type != base.object_type || theirs.object_type != base.object_type {
         return Err(conflict("type declaration".into()));
     }
     let parent =
@@ -115,8 +106,7 @@ fn merge_node(
         },
     )?;
     Ok(Some(SavedNode {
-        type_name: base.type_name.clone(),
-        type_version: base.type_version,
+        object_type: base.object_type.clone(),
         parent,
         properties,
     }))

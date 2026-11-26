@@ -460,6 +460,8 @@ version = "0.1.0"
 dependencies = [
  "engine-app",
  "engine-scene",
+ "ron",
+ "serde",
  "tempfile",
 ]
 

@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::{ObjectId, PropertyValue, Truth, TruthError, TruthObject, TypeShape};
 
-pub(super) const SCENE_VERSION: u32 = 1;
+pub(super) const SCENE_VERSION: u32 = 2;
 
 /// Stable persisted name for a reflected struct used in a scene.
 ///
@@ -22,7 +22,9 @@ pub struct SceneTypeName(pub &'static str);
 #[derive(Debug, thiserror::Error)]
 pub enum SceneError {
     /// The scene format version has no reader.
-    #[error("unsupported scene schema version {0}; expected {SCENE_VERSION}")]
+    #[error(
+        "unsupported scene schema version {0}; supported versions are 1 through {SCENE_VERSION}"
+    )]
     UnsupportedVersion(u32),
     /// The RON document does not match the scene format.
     #[error("could not read scene RON: {0}")]
@@ -93,8 +95,7 @@ pub(super) struct SceneFile<T> {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SavedObject<T> {
-    pub(super) type_name: String,
-    pub(super) type_version: u32,
+    pub(super) object_type: SavedType,
     pub(super) parent: Option<ObjectId>,
     #[serde(
         deserialize_with = "unique_map",
@@ -103,13 +104,91 @@ pub(super) struct SavedObject<T> {
     pub(super) properties: BTreeMap<String, T>,
 }
 
-pub(super) fn read_scene(text: &str) -> Result<SceneFile<Box<RawValue>>, SceneError> {
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SavedType {
+    name: String,
+    version: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SceneV1 {
+    #[serde(rename = "schema_version")]
+    _schema_version: u32,
+    #[serde(deserialize_with = "unique_map")]
+    objects: BTreeMap<ObjectId, ObjectV1>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ObjectV1 {
+    type_name: String,
+    type_version: u32,
+    parent: Option<ObjectId>,
+    #[serde(deserialize_with = "unique_map")]
+    properties: BTreeMap<String, Box<RawValue>>,
+}
+
+impl From<SceneV1> for SceneFile<Box<RawValue>> {
+    fn from(scene: SceneV1) -> Self {
+        let objects = scene
+            .objects
+            .into_iter()
+            .map(|(id, node)| {
+                let object = SavedObject {
+                    object_type: SavedType {
+                        name: node.type_name,
+                        version: node.type_version,
+                    },
+                    parent: node.parent,
+                    properties: node.properties,
+                };
+                (id, object)
+            })
+            .collect();
+        Self {
+            schema_version: SCENE_VERSION,
+            objects,
+        }
+    }
+}
+
+pub(super) fn read_scene(text: &str) -> Result<(u32, SceneFile<Box<RawValue>>), SceneError> {
     // Read the version independently so a future layout can still report its version.
     let VersionHeader { schema_version } = ron::from_str(text)?;
-    if schema_version != SCENE_VERSION {
-        return Err(SceneError::UnsupportedVersion(schema_version));
+    let scene = match schema_version {
+        1 => ron::from_str::<SceneV1>(text)?.into(),
+        SCENE_VERSION => ron::from_str(text)?,
+        _ => return Err(SceneError::UnsupportedVersion(schema_version)),
+    };
+    Ok((schema_version, scene))
+}
+
+/// Validates the persisted scene structure and upgrades an older RON document.
+///
+/// Current documents return an empty option so callers can leave their bytes intact.
+/// Object schemas and property values stay as stored. The project loader validates
+/// them against its reflected type registrations.
+pub fn migrate_scene_ron(text: &str) -> Result<Option<String>, SceneError> {
+    let (version, mut scene) = read_scene(text)?;
+    scene.children()?;
+    if version == SCENE_VERSION {
+        return Ok(None);
     }
-    ron::from_str(text).map_err(Into::into)
+    scene.trim_properties();
+    Ok(Some(write_scene(&scene)?))
+}
+
+impl SceneFile<Box<RawValue>> {
+    pub(super) fn trim_properties(&mut self) {
+        for object in self.objects.values_mut() {
+            object.properties = std::mem::take(&mut object.properties)
+                .into_iter()
+                .map(|(name, value)| (name, value.trim_boxed()))
+                .collect();
+        }
+    }
 }
 
 pub(super) fn write_scene<T: Serialize>(scene: &SceneFile<T>) -> Result<String, ron::Error> {
@@ -134,11 +213,13 @@ impl<'registry> Truth<'registry> {
             objects.insert(
                 id,
                 SavedObject {
-                    type_name: name.to_owned(),
-                    type_version: registration
-                        .schema()
-                        .expect("registered object schema")
-                        .version,
+                    object_type: SavedType {
+                        name: name.to_owned(),
+                        version: registration
+                            .schema()
+                            .expect("registered object schema")
+                            .version,
+                    },
                     parent: object.parent,
                     properties: object
                         .properties()
@@ -160,25 +241,27 @@ impl<'registry> Truth<'registry> {
     /// are decoded as their declared Rust types when read. The loaded scene starts a new journal
     /// and preserves authored object and asset references, including unresolved ones.
     pub fn from_ron(registry: &'registry TypeRegistry, text: &str) -> Result<Self, SceneError> {
-        let scene = read_scene(text)?;
+        let (_, scene) = read_scene(text)?;
         let mut children = scene.children()?;
         let types = scene_types(registry)?;
         let mut truth = Self::new(registry);
         for (id, saved) in scene.objects {
-            let Some((&name, &registration)) = types.get_key_value(saved.type_name.as_str()) else {
+            let object_type = saved.object_type;
+            let Some((&name, &registration)) = types.get_key_value(object_type.name.as_str())
+            else {
                 return Err(SceneError::UnknownType {
                     object: id,
-                    name: saved.type_name,
+                    name: object_type.name,
                 });
             };
             let Some(schema) = registration.schema() else {
                 return Err(TruthError::UnregisteredType(registration.name()).into());
             };
-            if saved.type_version != schema.version {
+            if object_type.version != schema.version {
                 return Err(SceneError::UnsupportedTypeVersion {
                     object: id,
                     name,
-                    found: saved.type_version,
+                    found: object_type.version,
                     expected: schema.version,
                 });
             }
