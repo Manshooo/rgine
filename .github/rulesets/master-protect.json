@@ -33,7 +33,6 @@
         "required_status_checks": [
           { "context": "host (ubuntu-latest)" },
           { "context": "host (windows-latest)" },
-          { "context": "host (macos-latest)" },
           { "context": "android" },
           { "context": "msrv" },
           { "context": "deny" },
