@@ -1,3 +1,5 @@
+#![cfg(feature = "authoring")]
+
 use std::sync::Mutex;
 
 use engine_core::{Reflect, TypeRegistry};

@@ -1,3 +1,5 @@
+#![cfg(feature = "authoring")]
+
 use engine_core::{Reflect, TypeRegistry};
 use engine_scene::{ObjectId, SceneError, SceneTypeName, Truth, TruthError};
 use serde::{Deserialize, Serialize};
