@@ -16,7 +16,7 @@ pub use compiler::{CompileError, SceneCompilation, SceneReferences};
 pub use truth::{
     Change, JournalEntry, ObjectId, PrefabError, PrefabInstance, PropertyValue, SceneError,
     SceneMergeError, SceneTypeName, Truth, TruthError, TruthObject, merge_scene_ron,
-    register_prefabs,
+    migrate_scene_ron, register_prefabs,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

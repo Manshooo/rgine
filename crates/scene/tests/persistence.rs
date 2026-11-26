@@ -1,11 +1,12 @@
 #![cfg(feature = "authoring")]
 
 use engine_core::{Reflect, TypeRegistry};
-use engine_scene::{ObjectId, SceneError, SceneTypeName, Truth, TruthError};
+use engine_scene::{ObjectId, SceneError, SceneTypeName, Truth, TruthError, migrate_scene_ron};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const SCENE: &str = include_str!("fixtures/authored.scene.ron");
+const SCENE_V1: &str = include_str!("fixtures/authored-v1.scene.ron");
 const CHILD: ObjectId = ObjectId::from_u128(1);
 const ROOT: ObjectId = ObjectId::from_u128(2);
 const ASSET: Uuid = Uuid::from_u128(100);
@@ -104,6 +105,22 @@ fn scene_round_trips_hierarchy_and_references_across_registries() {
 }
 
 #[test]
+fn previous_scene_schema_migrates_and_opens_with_the_current_loader() {
+    let mut registry = TypeRegistry::default();
+    register_node(&mut registry);
+    let migrated = migrate_scene_ron(SCENE_V1).unwrap().unwrap();
+    assert_eq!(migrated, SCENE);
+    assert_eq!(migrate_scene_ron(&migrated).unwrap(), None);
+    let previous = Truth::from_ron(&registry, SCENE_V1).unwrap();
+    let current = Truth::from_ron(&registry, &migrated).unwrap();
+    assert_eq!(
+        previous.objects().collect::<Vec<_>>(),
+        current.objects().collect::<Vec<_>>()
+    );
+    assert_eq!(current.to_ron().unwrap(), SCENE);
+}
+
+#[test]
 fn unsupported_versions_are_reported() {
     let mut registry = TypeRegistry::default();
     register_node(&mut registry);
@@ -113,7 +130,11 @@ fn unsupported_versions_are_reported() {
         Err(SceneError::UnsupportedVersion(42))
     ));
 
-    let wrong_type_version = SCENE.replacen("type_version: 2", "type_version: 3", 1);
+    let wrong_type_version = SCENE.replacen(
+        "\n                version: 2",
+        "\n                version: 3",
+        1,
+    );
     assert!(matches!(
         Truth::from_ron(&registry, &wrong_type_version),
         Err(SceneError::UnsupportedTypeVersion {

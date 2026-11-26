@@ -4,6 +4,8 @@ use engine_scene::{ObjectId, SceneError, SceneMergeError, merge_scene_ron};
 
 const FIRST: ObjectId = ObjectId::from_u128(1);
 const SECOND: ObjectId = ObjectId::from_u128(2);
+const SCENE_V1: &str = include_str!("fixtures/authored-v1.scene.ron");
+const SCENE_V2: &str = include_str!("fixtures/authored.scene.ron");
 
 fn node(id: ObjectId, parent: Option<ObjectId>) -> String {
     let parent = parent.map_or_else(|| "None".to_owned(), |parent| format!("Some(\"{parent}\")"));
@@ -12,6 +14,16 @@ fn node(id: ObjectId, parent: Option<ObjectId>) -> String {
 
 fn scene(nodes: &[String]) -> String {
     format!("(schema_version:1,objects:{{{}}})", nodes.join(","))
+}
+
+#[test]
+fn merges_edits_across_the_document_migration() {
+    let ours = SCENE_V2.replace("\"child\"", "\"edited child\"");
+    let theirs = SCENE_V1.replace("speed:2", "speed:5");
+    assert_eq!(
+        merge_scene_ron(SCENE_V1, &ours, &theirs).unwrap(),
+        ours.replace("speed:2", "speed:5")
+    );
 }
 
 #[test]

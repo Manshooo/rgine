@@ -18,7 +18,7 @@ mod persistence;
 mod prefab;
 
 pub use merge::{SceneMergeError, merge_scene_ron};
-pub use persistence::{SceneError, SceneTypeName};
+pub use persistence::{SceneError, SceneTypeName, migrate_scene_ron};
 pub use prefab::{PrefabError, PrefabInstance, register_prefabs};
 
 /// Stable GUID of an authored object within its scene.

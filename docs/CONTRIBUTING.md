@@ -202,3 +202,15 @@ The repository assigns this driver to `*.scene.ron` and `*.prefab.ron`. A merge 
 A conflict reports the object UUID and affected field when available. Git retains the common, current and incoming versions in its index, and the working-tree file retains the current version. Inspect the inputs with `git show ':1:<path>'`, `git show ':2:<path>'` and `git show ':3:<path>'`. Edit the working-tree RON and stage the result with `git add -- <path>`.
 
 See the [Git merge driver documentation](https://git-scm.com/docs/gitattributes#_defining_a_custom_merge_driver) for the driver placeholders.
+
+## Migrate a project
+
+Run `engine-cli migrate` with the project directory and a new output directory outside the project. The parent of the output directory must already exist.
+
+```sh
+engine-cli migrate ./my-project ./my-project-v2
+```
+
+The command validates the manifest and authored scene and prefab files before writing a copy. A failure names the source or destination path and leaves the original project intact. The copy includes project files and asset sidecars. The checkout's root `.git` entry stays with the original.
+
+Run the command against a migrated project to verify that it is up to date. This returns success without creating a copy. See [ADR 0021](adr/0021-authored-scene-migration.md) for the supported scene versions.
