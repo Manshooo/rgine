@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+};
 
 #[cfg(debug_assertions)]
 use engine_ecs::{Entity, World};
@@ -9,12 +12,31 @@ use crate::{CompiledScene, ObjectId, SceneNodeId, Truth, TruthObject};
 use crate::{SceneEntities, SceneLoadError};
 
 /// Looks up an authored reference in the complete scene being compiled.
-pub struct SceneReferences<'a>(&'a BTreeMap<ObjectId, SceneNodeId>);
+pub struct SceneReferences<'a> {
+    indices: &'a BTreeMap<ObjectId, SceneNodeId>,
+    looked_up: Option<&'a Mutex<BTreeSet<ObjectId>>>,
+}
 
-impl SceneReferences<'_> {
+impl<'a> SceneReferences<'a> {
+    pub(crate) fn tracking(
+        indices: &'a BTreeMap<ObjectId, SceneNodeId>,
+        looked_up: &'a Mutex<BTreeSet<ObjectId>>,
+    ) -> Self {
+        Self {
+            indices,
+            looked_up: Some(looked_up),
+        }
+    }
+
     /// Resolves a scene-local object ID to its compiled node index.
     pub fn get(&self, object: ObjectId) -> Option<SceneNodeId> {
-        self.0.get(&object).copied()
+        if let Some(looked_up) = self.looked_up {
+            looked_up
+                .lock()
+                .expect("reference tracking lock")
+                .insert(object);
+        }
+        self.indices.get(&object).copied()
     }
 }
 
@@ -94,18 +116,11 @@ impl Truth<'_> {
         &self,
         mut compile_object: impl FnMut(ObjectId, &TruthObject, &SceneReferences<'_>) -> Result<T, E>,
     ) -> Result<SceneCompilation<T>, CompileError<E>> {
-        if let Some(object) = self.first_prefab() {
-            return Err(CompileError::UnresolvedPrefab(object));
-        }
-        let objects = self.objects();
-        if u32::try_from(objects.len()).is_err() {
-            return Err(CompileError::TooManyNodes);
-        }
-        let indices = objects
-            .enumerate()
-            .map(|(index, (object, _))| (object, SceneNodeId(index as u32)))
-            .collect();
-        let references = SceneReferences(&indices);
+        let indices = scene_indices(self)?;
+        let references = SceneReferences {
+            indices: &indices,
+            looked_up: None,
+        };
         let mut nodes = Vec::with_capacity(indices.len());
         for (id, object) in self.objects() {
             let data = compile_object(id, object, &references)
@@ -121,4 +136,20 @@ impl Truth<'_> {
             objects: indices.into_keys().collect(),
         })
     }
+}
+
+pub(crate) fn scene_indices<E>(
+    truth: &Truth<'_>,
+) -> Result<BTreeMap<ObjectId, SceneNodeId>, CompileError<E>> {
+    if let Some(object) = truth.first_prefab() {
+        return Err(CompileError::UnresolvedPrefab(object));
+    }
+    let objects = truth.objects();
+    if u32::try_from(objects.len()).is_err() {
+        return Err(CompileError::TooManyNodes);
+    }
+    Ok(objects
+        .enumerate()
+        .map(|(index, (object, _))| (object, SceneNodeId(index as u32)))
+        .collect())
 }

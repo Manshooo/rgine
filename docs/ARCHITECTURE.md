@@ -36,6 +36,8 @@ Authoring data and runtime data are separate representations with a deterministi
 
 The full `Truth -> World` compiler is the reference for incremental compilation. Development builds keep a bidirectional `Entity` to `ObjectId` map. Shipped games disable `engine-scene`'s `authoring` feature and load compiled data without that map or Truth. [ADR 0019](adr/0019-compiled-scene-runtime.md) records the compiled artifact and instantiation contract.
 
+`IncrementalScene` reconciles resolved Truth snapshots into a live development world and preserves surviving `Entity` handles. [ADR 0022](adr/0022-incremental-scene-compilation.md) defines the affected nodes and how updates are prepared and applied.
+
 ## Backend API rules
 
 The rules below apply to the public surface of `platform`, `render`, `physics`, `audio` and `script`. They are what makes those backends genuinely replaceable rather than nominally so. `platform` is covered on the same terms as the rest (ADR 0009): windowing is a backend choice like any other.
