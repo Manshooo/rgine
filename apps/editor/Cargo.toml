@@ -7,5 +7,9 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
-engine-app.workspace = true
 engine-core.workspace = true
+engine-platform.workspace = true
+engine-render.workspace = true
+engine-scene = { workspace = true, features = ["authoring"] }
+engine-ui = { workspace = true, features = ["canvas"] }
+tempfile = "3"

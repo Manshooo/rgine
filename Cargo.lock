@@ -548,8 +548,12 @@ dependencies = [
 name = "engine-editor"
 version = "0.1.0"
 dependencies = [
- "engine-app",
  "engine-core",
+ "engine-platform",
+ "engine-render",
+ "engine-scene",
+ "engine-ui",
+ "tempfile",
 ]
 
 [[package]]

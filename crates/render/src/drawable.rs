@@ -361,6 +361,15 @@ impl Drawable {
         self.present(clear, None, None)
     }
 
+    /// Clears the drawable and composites an ordered screen-space canvas.
+    pub fn draw_with_canvas(
+        &mut self,
+        clear: [f64; 4],
+        canvas: &Canvas,
+    ) -> Result<DrawOutcome, RenderError> {
+        self.present(clear, None, Some(canvas))
+    }
+
     /// Draws the extracted scene with the current device and drawable size.
     pub fn draw_scene(
         &mut self,

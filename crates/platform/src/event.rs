@@ -29,6 +29,14 @@ pub enum Event {
     },
     /// Input delivered to a window during this batch.
     Input(InputEvent),
+    /// Committed text from the current keyboard layout or input method.
+    /// Kept outside physical input events and gameplay recordings.
+    TextInput {
+        /// Window accepting text.
+        window: WindowId,
+        /// The committed characters.
+        text: String,
+    },
 }
 
 /// What happened to one window.
