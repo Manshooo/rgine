@@ -153,11 +153,9 @@ impl PlatformApp for &mut Editor<'_> {
                         .as_ref()
                         .and_then(|surface| surface.canvas_viewport().ok())
                     {
-                        dirty |= self.hierarchy.input(
-                            event.input,
-                            viewport.display_scale(),
-                            viewport.logical_size(),
-                        );
+                        dirty |= self
+                            .hierarchy
+                            .input(event.input, viewport, &mut self.preview);
                     }
                 }
                 Event::TextInput {

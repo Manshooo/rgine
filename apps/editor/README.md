@@ -25,3 +25,7 @@ It reframes on hierarchy edits and window resize. Older nodes with only a
 name appear in a grid ordered by object ID. A node can also specify a
 world-space `"position": (x, y, z)` property in the scene file. The editor
 preserves that property when saving.
+
+Click a cube to select its node in the hierarchy. The selected cube turns
+amber when chosen in either view. Click the viewport background to clear the
+selection. While moving a node, you can also pick its new parent in the viewport.

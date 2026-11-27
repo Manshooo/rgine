@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use engine_platform::{Input, KeyCode, MouseButton, PhysicalKey, ScrollDelta};
-use engine_render::canvas::{Rect, Vec2};
+use engine_render::canvas::{Rect, Vec2, Viewport};
 use engine_scene::ObjectId;
 
 use crate::{
     document::Document,
+    preview::Preview,
     view::{Actions, Layout},
 };
 
@@ -248,7 +249,8 @@ impl<'registry> Hierarchy<'registry> {
         }
     }
 
-    pub fn input(&mut self, input: Input, scale: f32, size: Vec2) -> bool {
+    pub fn input(&mut self, input: Input, viewport: Viewport, preview: &mut Preview) -> bool {
+        let scale = viewport.display_scale();
         match input {
             Input::PointerMoved { x, y } => {
                 self.pointer = Some(Vec2::new(x as f32, y as f32));
@@ -262,24 +264,29 @@ impl<'registry> Hierarchy<'registry> {
                 button: MouseButton::Left,
                 pressed: true,
             } => {
-                let Some(pointer) = self.pointer.map(|point| point / scale) else {
+                let Some(pixel) = self.pointer else {
                     return false;
                 };
-                let layout = Layout::new(size);
+                let pointer = (pixel.floor() + Vec2::splat(0.5)) / scale;
+                let layout = Layout::new(viewport.logical_size());
                 let actions = Actions::new(self, &layout);
                 if let Some(action) = actions.hit(pointer) {
-                    self.apply(action)
-                } else if self.dialog.is_none()
-                    && self.moving.is_none()
-                    && contains(layout.rows, pointer)
-                {
-                    self.apply(Action::Select(None))
-                } else {
-                    false
+                    return self.apply(action);
                 }
+                if self.dialog.is_some() {
+                    return false;
+                }
+                if contains(layout.scene, pointer)
+                    && let Some(region) = viewport.pixel_rect(layout.scene)
+                {
+                    return self.pick(preview, region, pixel, &layout);
+                }
+                self.moving.is_none()
+                    && contains(layout.rows, pointer)
+                    && self.apply(Action::Select(None))
             }
             Input::Scroll { delta, .. } if self.dialog.is_none() => {
-                let layout = Layout::new(size);
+                let layout = Layout::new(viewport.logical_size());
                 if !self
                     .pointer
                     .is_some_and(|point| contains(layout.rows, point / scale))
@@ -304,6 +311,35 @@ impl<'registry> Hierarchy<'registry> {
             _ => false,
         }
     }
+
+    fn pick(
+        &mut self,
+        preview: &mut Preview,
+        region: [u32; 4],
+        pixel: Vec2,
+        layout: &Layout,
+    ) -> bool {
+        let id = preview.pick(&self.document, region, pixel);
+        if self.moving.is_some() {
+            return id.is_some() && self.apply(Action::Select(id));
+        }
+        self.apply(Action::Select(id));
+        if let Some(id) = id {
+            self.reveal_row(id, layout.visible_rows());
+        }
+        true
+    }
+
+    fn reveal_row(&mut self, id: ObjectId, visible: usize) {
+        if visible == 0 {
+            return;
+        }
+        let rows = self.document.hierarchy();
+        if let Some(index) = rows.iter().position(|row| row.id == id) {
+            let offset = self.offset.min(rows.len().saturating_sub(visible));
+            self.offset = offset.clamp((index + 1).saturating_sub(visible), index);
+        }
+    }
 }
 
 pub(crate) fn contains(rect: Rect, point: Vec2) -> bool {
@@ -314,24 +350,32 @@ pub(crate) fn contains(rect: Rect, point: Vec2) -> bool {
 mod tests {
     use super::*;
 
-    fn click(state: &mut Hierarchy<'_>, x: f64, y: f64) {
-        let size = Vec2::new(960.0, 630.0);
+    fn click(state: &mut Hierarchy<'_>, preview: &mut Preview, x: f64, y: f64) -> bool {
+        click_pixel(
+            state,
+            preview,
+            Viewport::new([1920, 1260], 2.0).unwrap(),
+            x * 2.0,
+            y * 2.0,
+        )
+    }
+
+    fn click_pixel(
+        state: &mut Hierarchy<'_>,
+        preview: &mut Preview,
+        viewport: Viewport,
+        x: f64,
+        y: f64,
+    ) -> bool {
+        state.input(Input::PointerMoved { x, y }, viewport, preview);
         state.input(
-            Input::PointerMoved {
-                x: x * 2.0,
-                y: y * 2.0,
-            },
-            2.0,
-            size,
-        );
-        assert!(state.input(
             Input::MouseButton {
                 button: MouseButton::Left,
-                pressed: true
+                pressed: true,
             },
-            2.0,
-            size,
-        ));
+            viewport,
+            preview,
+        )
     }
 
     #[test]
@@ -340,35 +384,115 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("test.scene.ron");
         let mut state = Hierarchy::new(Document::new(&registry));
+        let mut preview = Preview::new();
 
-        click(&mut state, 35.0, 115.0); // Add root
+        assert!(click(&mut state, &mut preview, 35.0, 115.0)); // Add root
         let root = state.document.selected.unwrap();
         assert!(state.key(KeyCode::F2));
         assert!(state.text("Старт"));
         assert!(state.key(KeyCode::Enter));
-        click(&mut state, 35.0, 115.0); // Add child
+        assert!(click(&mut state, &mut preview, 35.0, 115.0)); // Add child
         let child = state.document.selected.unwrap();
 
-        click(&mut state, 38.0, 155.0); // Select root
-        click(&mut state, 200.0, 115.0); // Move
-        click(&mut state, 38.0, 181.0); // Attempt to parent root under its child
+        assert!(click(&mut state, &mut preview, 38.0, 155.0)); // Select root
+        assert!(click(&mut state, &mut preview, 200.0, 115.0)); // Move
+        assert!(click(&mut state, &mut preview, 38.0, 181.0)); // Attempt to parent root under its child
         assert!(state.notice.contains("would create a cycle"));
         assert_eq!(state.moving, Some(root));
         assert_eq!(state.document.hierarchy()[1].depth, 1);
         assert!(state.key(KeyCode::Escape));
         assert_eq!(state.document.selected, Some(root));
 
-        click(&mut state, 385.0, 52.0); // Save
+        assert!(click(&mut state, &mut preview, 385.0, 52.0)); // Save
         assert!(state.accepts_text());
         assert!(state.text(&path.to_string_lossy()));
         assert!(state.key(KeyCode::Enter));
         assert!(state.notice.is_empty(), "{}", state.notice);
         assert!(!state.document.is_dirty());
-        click(&mut state, 244.0, 52.0); // Open
+        assert!(click(&mut state, &mut preview, 244.0, 52.0)); // Open
         assert!(state.key(KeyCode::Enter)); // Reopen the current path
         assert!(state.notice.is_empty(), "{}", state.notice);
         assert_eq!(state.document.selected, Some(root));
         assert_eq!(state.document.name(root), "Старт");
         assert_eq!(state.document.hierarchy()[1].id, child);
+    }
+
+    #[test]
+    fn viewport_pick_reveals_the_row_and_hierarchy_selection_updates_the_cube() {
+        let registry = crate::document::registry();
+        let mut state = Hierarchy::new(Document::new(&registry));
+        state.document.add().unwrap();
+        let root = state.document.selected.unwrap();
+        state.document.add().unwrap();
+        let child = state.document.selected.unwrap();
+        state.document.selected = None;
+
+        let viewport = Viewport::new([1920, 500], 2.0).unwrap();
+        let layout = Layout::new(viewport.logical_size());
+        assert_eq!(layout.visible_rows(), 1);
+        let region @ [x, y, width, height] = viewport.pixel_rect(layout.scene).unwrap();
+        let mut preview = Preview::new();
+        assert_eq!(preview.update(&state.document, Some(region)), None);
+        let child_index = usize::from(child > root);
+        let child_object = preview.scene.objects[child_index];
+        let clip = preview
+            .scene
+            .camera
+            .unwrap()
+            .clip_from_world([width, height])
+            .unwrap();
+        let ndc = clip.project_point3(child_object.transform.w_axis.truncate());
+        let pixel = [
+            f64::from(x) + f64::from(ndc.x + 1.0) * 0.5 * f64::from(width),
+            f64::from(y) + f64::from(1.0 - ndc.y) * 0.5 * f64::from(height),
+        ];
+
+        assert!(click_pixel(
+            &mut state,
+            &mut preview,
+            viewport,
+            pixel[0],
+            pixel[1]
+        ));
+        assert_eq!(state.document.selected, Some(child));
+        assert_eq!(state.offset, 1);
+        assert!(
+            Actions::new(&state, &layout).hit(layout.rows.min + Vec2::ONE)
+                == Some(Action::Select(Some(child)))
+        );
+        assert_eq!(preview.update(&state.document, Some(region)), None);
+        let selected_color = preview.scene.objects[child_index].color;
+        assert_ne!(selected_color, child_object.color);
+
+        assert!(click_pixel(
+            &mut state,
+            &mut preview,
+            viewport,
+            f64::from(x),
+            f64::from(y)
+        ));
+        assert_eq!(state.document.selected, None);
+        assert_eq!(preview.update(&state.document, Some(region)), None);
+        assert_eq!(preview.scene.objects[child_index].color, child_object.color);
+
+        state.offset = 0;
+        assert!(click_pixel(&mut state, &mut preview, viewport, 76.0, 310.0));
+        assert_eq!(state.document.selected, Some(root));
+        assert_eq!(preview.update(&state.document, Some(region)), None);
+        assert_eq!(preview.scene.objects[1 - child_index].color, selected_color);
+
+        assert!(state.key(KeyCode::Delete));
+        assert!(!click_pixel(
+            &mut state,
+            &mut preview,
+            viewport,
+            pixel[0],
+            pixel[1]
+        ));
+        assert_eq!(state.document.selected, Some(root));
+        assert!(state.key(KeyCode::Enter));
+        assert_eq!(state.document.selected, None);
+        assert_eq!(preview.update(&state.document, Some(region)), None);
+        assert!(preview.scene.objects.is_empty());
     }
 }
