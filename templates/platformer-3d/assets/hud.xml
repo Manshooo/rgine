@@ -5,6 +5,6 @@
             <label class="total" text="0 / 4" bind="coins" />
         </panel>
         <label class="progress" text="Find the violet checkpoint" bind="progress" />
-        <label class="controls" text="A/D or arrows · Space to jump · Esc to pause" />
+        <label class="controls" text="A/D or arrows · Space to jump · Esc to pause" bind="controls" />
     </panel>
 </ui>

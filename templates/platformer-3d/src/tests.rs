@@ -6,7 +6,8 @@ use engine_app::core::glam::Vec3;
 use engine_app::ecs::Entity;
 use engine_app::physics::{Collider, KinematicMotion, PhysicsInterpolation, PhysicsPose};
 use engine_app::platform::{
-    Commands, Input, InputEvent, InputTimestamp, KeyCode, PhysicalKey, WindowDesc, WindowId,
+    Commands, Input, InputEvent, InputTimestamp, KeyCode, PhysicalKey, TouchPhase, WindowDesc,
+    WindowId,
 };
 use engine_app::scene::Renderable;
 
@@ -21,10 +22,15 @@ struct Fixture {
     player: Entity,
     window: WindowId,
     overlay: Overlay,
+    viewport: Viewport,
 }
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_controls(Viewport::new([1040, 640], 1.0).unwrap(), false)
+    }
+
+    fn with_controls(viewport: Viewport, touch: bool) -> Self {
         let Game {
             app,
             player,
@@ -37,7 +43,8 @@ impl Fixture {
             simulation: app.into_simulation(),
             player,
             window: windows[0],
-            overlay: Overlay::new(interaction).unwrap(),
+            overlay: Overlay::new(interaction, touch).unwrap(),
+            viewport,
         };
         for _ in 0..12 {
             fixture.step([]);
@@ -47,21 +54,23 @@ impl Fixture {
     }
 
     fn step(&mut self, keys: impl IntoIterator<Item = (KeyCode, bool)>) {
+        self.step_input(keys.into_iter().map(|(key, pressed)| Input::Key {
+            key: PhysicalKey::Code(key),
+            pressed,
+            repeat: false,
+        }));
+    }
+
+    fn step_input(&mut self, inputs: impl IntoIterator<Item = Input>) {
         self.simulation
-            .queue_input(keys.into_iter().map(|(key, pressed)| InputEvent {
+            .queue_input(inputs.into_iter().map(|input| InputEvent {
                 window: self.window,
                 timestamp: InputTimestamp::Received(Duration::ZERO),
-                input: Input::Key {
-                    key: PhysicalKey::Code(key),
-                    pressed,
-                    repeat: false,
-                },
+                input,
             }));
         assert_eq!(self.simulation.advance(STEP), 1);
         let run = self.simulation.world().get::<Run>(self.player).unwrap();
-        self.overlay
-            .prepare(&run, Viewport::new([1040, 640], 1.0).unwrap())
-            .unwrap();
+        self.overlay.prepare(&run, self.viewport).unwrap();
     }
 
     fn tap(&mut self, key: KeyCode) {
@@ -285,4 +294,65 @@ fn pausing_mid_jump_freezes_player_and_resume_uses_the_same_world() {
     assert_eq!(game.coins(), 1);
     game.step([(KeyCode::KeyD, false), (KeyCode::KeyD, true)]);
     assert!(game.position().x > frozen.x);
+}
+
+#[test]
+fn touch_buttons_support_multitouch_and_release_under_the_pause_menu() {
+    use TouchPhase::{Cancelled, Ended, Moved, Started};
+
+    let mut game = Fixture::with_controls(Viewport::new([960, 540], 1.5).unwrap(), true);
+    let touch = |id, phase, [x, y]: [f64; 2]| Input::Touch {
+        id,
+        phase,
+        x: x * 1.5,
+        y: y * 1.5,
+    };
+    let right = [121.0, 307.0];
+    let jump = [582.0, 307.0];
+    let pause = [581.0, 35.0];
+    let resume = [320.0, 170.0];
+
+    game.step_input([touch(1, Started, right), touch(2, Started, right)]);
+    let moving = game.position();
+    game.step_input([touch(1, Cancelled, right), touch(2, Moved, jump)]);
+    assert!(game.position().x > moving.x);
+    assert!(game.grounded(), "dragging a held finger cannot start Jump");
+    game.wait_for("touch movement should collect the first coin", |game| {
+        game.coins() == 1
+    });
+    game.step_input([touch(2, Ended, jump)]);
+    let stopped = game.position().x;
+    game.step([]);
+    assert_eq!(game.position().x, stopped);
+
+    game.step_input([touch(2, Started, right)]);
+    game.wait_for("touch movement should reach takeoff", |game| {
+        game.position().x >= -0.05
+    });
+    let takeoff = game.position();
+    game.step_input([touch(3, Started, jump)]);
+    assert!(game.position().x > takeoff.x && game.position().y > takeoff.y);
+    game.step_input([touch(3, Ended, jump)]);
+    game.wait_for("the two touches should cross the gap", |game| {
+        game.position().x >= 3.3 && game.grounded()
+    });
+
+    game.step_input([touch(4, Started, pause), touch(4, Ended, pause)]);
+    assert!(game.paused());
+    let frozen = game.position();
+    game.step_input([touch(5, Started, right)]);
+    game.step_input([touch(6, Started, resume), touch(6, Ended, resume)]);
+    assert!(!game.paused());
+    game.step([]);
+    assert!((game.position().x - frozen.x).abs() < 0.0001);
+    game.step_input([
+        touch(2, Ended, right),
+        touch(5, Ended, right),
+        touch(7, Started, right),
+    ]);
+    assert!(game.position().x > frozen.x);
+    game.step_input([Input::Cancelled]);
+    let cancelled = game.position().x;
+    game.step([]);
+    assert!((game.position().x - cancelled).abs() < 0.0001);
 }

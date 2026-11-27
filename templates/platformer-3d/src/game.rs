@@ -12,7 +12,7 @@ use engine_ecs::{Commands, Component, Entity, World};
 use engine_ui::input::InputResult;
 
 use crate::level::{self, Checkpoint, Coin};
-use crate::ui::{Interaction, MenuAction};
+use crate::ui::{Interaction, MenuAction, TouchButton};
 
 const PLAYER_RADIUS: f32 = 0.44;
 const MOVE_SPEED: f32 = 5.8;
@@ -155,7 +155,10 @@ fn install_input(app: &mut App, interaction: Rc<RefCell<Interaction>>) {
             .bind(key(KeyCode::ArrowLeft), Action::Left)
             .bind(key(KeyCode::KeyD), Action::Right)
             .bind(key(KeyCode::ArrowRight), Action::Right)
-            .bind(key(KeyCode::Space), Action::Jump),
+            .bind(key(KeyCode::Space), Action::Jump)
+            .bind(TouchButton::Left.binding(), Action::Left)
+            .bind(TouchButton::Right.binding(), Action::Right)
+            .bind(TouchButton::Jump.binding(), Action::Jump),
     );
     app.set_input_actions(actions, move |event, actions, resources| {
         let mut interaction = interaction.borrow_mut();
@@ -170,6 +173,7 @@ fn install_input(app: &mut App, interaction: Rc<RefCell<Interaction>>) {
             }
         );
         let next = match response {
+            InputResult::Action(MenuAction::Pause) => Some(true),
             InputResult::Action(MenuAction::Resume) => Some(false),
             InputResult::Action(MenuAction::Restart) => {
                 menu.restart = true;
@@ -186,6 +190,12 @@ fn install_input(app: &mut App, interaction: Rc<RefCell<Interaction>>) {
             } else {
                 actions.pop_context();
             }
+        }
+        if !menu.paused
+            && !response.consumed()
+            && let Some(button) = interaction.touch_button(event)
+        {
+            actions.press_touch_button(event, button as u16);
         }
         response.consumed() || toggle
     });

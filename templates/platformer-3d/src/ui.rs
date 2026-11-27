@@ -1,5 +1,6 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
+use engine_app::ActionBinding;
 use engine_app::canvas::{Canvas, Viewport};
 use engine_app::platform::{Input, InputEvent, MouseButton, TouchPhase};
 use engine_app::render_resources::{ResourceError, ResourceTable};
@@ -13,22 +14,46 @@ use crate::game::Run;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
+    Pause,
     Resume,
     Restart,
+}
+
+#[derive(Clone, Copy)]
+pub enum TouchButton {
+    Left,
+    Right,
+    Jump,
+}
+
+impl TouchButton {
+    pub fn binding(self) -> ActionBinding {
+        ActionBinding::TouchButton(self as u16)
+    }
+
+    fn named(name: &str) -> Option<Self> {
+        match name {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "jump" => Some(Self::Jump),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Default)]
 pub struct Interaction {
     input: UiInput<MenuAction>,
+    touch_targets: Vec<(TouchButton, geometry::Rect)>,
     dirty: bool,
 }
 
 impl Interaction {
     pub fn route(&mut self, event: &InputEvent, paused: bool) -> InputResult<MenuAction> {
         let result = self.input.route(event);
-        self.dirty |= paused
-            && (result.consumed()
-                || matches!(
+        self.dirty |= result.consumed()
+            || (paused
+                && matches!(
                     event.input,
                     Input::PointerMoved { .. }
                         | Input::Cancelled
@@ -46,7 +71,37 @@ impl Interaction {
 
     pub fn reset(&mut self) {
         self.input.reset();
+        self.touch_targets.clear();
         self.dirty = true;
+    }
+
+    pub fn touch_button(&self, event: &InputEvent) -> Option<TouchButton> {
+        let Input::Touch {
+            phase: TouchPhase::Started,
+            x,
+            y,
+            ..
+        } = event.input
+        else {
+            return None;
+        };
+        self.touch_targets
+            .iter()
+            .rev()
+            .find_map(|&(button, bounds)| bounds.contains([x as f32, y as f32]).then_some(button))
+    }
+}
+
+fn touch_targets(
+    node: &geometry::WidgetBox<'_, '_>,
+    scale: f32,
+    targets: &mut Vec<(TouchButton, geometry::Rect)>,
+) {
+    if let Some(button) = node.styled.widget.action().and_then(TouchButton::named) {
+        targets.push((button, node.bounds.physical(scale)));
+    }
+    for child in &node.children {
+        touch_targets(child, scale, targets);
     }
 }
 
@@ -62,12 +117,13 @@ struct Prepared {
     viewport: Viewport,
     state: Hud,
     hud: UiDrawList,
-    menu: Option<UiDrawList>,
+    foreground: Option<UiDrawList>,
 }
 
 pub struct Overlay {
     hud: WidgetTree,
     pause_menu: WidgetTree,
+    touch_controls: Option<WidgetTree>,
     styles: StyleSheet,
     fonts: FontBook,
     interaction: Rc<RefCell<Interaction>>,
@@ -76,7 +132,7 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    pub fn new(interaction: Rc<RefCell<Interaction>>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(interaction: Rc<RefCell<Interaction>>, touch: bool) -> Result<Self, Box<dyn Error>> {
         let mut fonts = FontBook::default();
         fonts.add_face(
             "ABeeZee",
@@ -89,6 +145,9 @@ impl Overlay {
         Ok(Self {
             hud: WidgetTree::parse("hud.xml", include_str!("../assets/hud.xml"))?,
             pause_menu: WidgetTree::parse("pause.xml", include_str!("../assets/pause.xml"))?,
+            touch_controls: touch
+                .then(|| WidgetTree::parse("touch.xml", include_str!("../assets/touch.xml")))
+                .transpose()?,
             styles: StyleSheet::parse("ui.css", include_str!("../assets/ui.css"))?,
             fonts,
             interaction,
@@ -111,8 +170,9 @@ impl Overlay {
             .hud
             .draw(canvas, viewport, &mut frame, |_| None)
             .map_err(resource_error)?;
-        if let Some(menu) = &prepared.menu {
-            menu.draw(canvas, viewport, &mut frame, |_| None)
+        if let Some(foreground) = &prepared.foreground {
+            foreground
+                .draw(canvas, viewport, &mut frame, |_| None)
                 .map_err(resource_error)?;
         }
         Ok(())
@@ -156,10 +216,13 @@ impl Overlay {
             |name| match name {
                 "coins" => Some(&coins),
                 "progress" => Some(progress),
+                "controls" if self.touch_controls.is_some() => {
+                    Some("Hold a direction and tap Jump")
+                }
                 _ => None,
             },
         )?;
-        let menu = if state.paused {
+        let foreground = if state.paused {
             let styled = self
                 .styles
                 .resolve(&self.pause_menu, |path, _| interaction.input.state(path));
@@ -172,6 +235,18 @@ impl Overlay {
                     _ => None,
                 });
             Some(UiDrawList::prepare(bounds))
+        } else if let Some(tree) = &self.touch_controls {
+            let styled = self
+                .styles
+                .resolve(tree, |path, _| interaction.input.state(path));
+            let bounds = geometry::layout(&styled, size, &self.fonts, |_| None)?;
+            let scale = viewport.display_scale();
+            interaction.input.set_layout(&bounds, scale, |_, name| {
+                (name == "pause").then_some(MenuAction::Pause)
+            });
+            interaction.touch_targets.clear();
+            touch_targets(&bounds, scale, &mut interaction.touch_targets);
+            Some(UiDrawList::prepare(bounds))
         } else {
             None
         };
@@ -179,7 +254,7 @@ impl Overlay {
             viewport,
             state,
             hud: UiDrawList::prepare(hud),
-            menu,
+            foreground,
         });
         interaction.dirty = false;
         Ok(())

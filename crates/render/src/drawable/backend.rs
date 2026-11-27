@@ -61,6 +61,10 @@ fn open_with_backend(
 fn open_instance(mut descriptor: InstanceDescriptor, backend: Backend) -> Instance {
     // Limit the instance itself so drivers for later candidates are loaded only on demand.
     descriptor.backends = backend.into();
+    if cfg!(all(target_os = "android", target_arch = "x86_64")) && backend == Backend::Vulkan {
+        // Android Emulator 37.3.10's x86-64 Vulkan driver crashes when naming swapchain views.
+        descriptor.flags.remove(wgpu::InstanceFlags::DEBUG);
+    }
     Instance::new(descriptor)
 }
 

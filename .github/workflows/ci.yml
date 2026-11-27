@@ -98,3 +98,4 @@ jobs:
           ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ndk_bin/aarch64-linux-android24-clang"
           cargo build --workspace --exclude xtask --exclude platformer-3d --all-features --lib --bins --examples --locked --target aarch64-linux-android
+          cargo rustc -p platformer-3d --lib --locked --target aarch64-linux-android --crate-type cdylib

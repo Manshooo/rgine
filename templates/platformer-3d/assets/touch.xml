@@ -1,0 +1,14 @@
+<ui>
+    <panel class="touch-controls">
+        <panel class="touch-top">
+            <button class="touch-pause" text="Pause" action="pause" />
+        </panel>
+        <panel class="touch-bottom">
+            <panel class="touch-direction">
+                <button class="touch-key" text="Left" action="left" />
+                <button class="touch-key" text="Right" action="right" />
+            </panel>
+            <button class="touch-key touch-jump" text="Jump" action="jump" />
+        </panel>
+    </panel>
+</ui>
