@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Authored UI can display game-published text and dispatch typed button actions through pointer, touch and keyboard focus (ADR 0035).
 - Authored game UI draws text, images and panel backgrounds over a 3D scene. Development builds can reload XML layouts and CSS styles without discarding the current overlay on syntax errors (ADR 0034).
 - Game UI renders shaped text through a bounded glyph atlas with incremental texture uploads and Canvas clipping (ADR 0033).
 - Styled game UI resolves to logical widget and content rectangles with reusable shaped label and button text (ADR 0032).

@@ -5,6 +5,8 @@
 #[cfg(feature = "canvas")]
 pub mod canvas;
 pub mod geometry;
+#[cfg(feature = "input")]
+pub mod input;
 mod layout;
 mod style;
 pub mod text;

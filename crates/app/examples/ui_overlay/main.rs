@@ -1,6 +1,8 @@
 //! Draw authored UI over a scene and reload the XML and CSS while it runs.
 
-use std::path::PathBuf;
+mod controls;
+
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use engine_app::canvas::{Canvas, Viewport};
 use engine_app::core::glam::{Quat, Vec3};
@@ -22,13 +24,16 @@ const MARKER_RGBA: &[u8] = &[
     255, 215, 71, 255, 31, 132, 253, 255, 31, 132, 253, 255, 255, 215, 71, 255,
 ];
 
+use controls::Controls;
+
 struct Overlay {
     reload: UiReload,
     document: UiDocument,
     fonts: FontBook,
     atlas: GlyphAtlas,
     image: Option<SampledGroupHandle>,
-    prepared: Option<([f32; 2], UiDrawList)>,
+    controls: Rc<RefCell<Controls>>,
+    prepared: Option<(Viewport, UiDrawList)>,
 }
 
 impl Overlay {
@@ -41,31 +46,45 @@ impl Overlay {
         match self.reload.poll(&mut self.document) {
             Ok(true) => {
                 self.prepared = None;
+                self.controls.borrow_mut().input.reset();
                 eprintln!("ui overlay: applied authored edit");
             }
             Ok(false) => {}
             Err(error) => eprintln!("ui overlay: {error}"),
         }
         let size = viewport.logical_size().to_array();
-        if self
+        let viewport_changed = self
             .prepared
             .as_ref()
-            .is_none_or(|(previous, _)| *previous != size)
-        {
+            .is_none_or(|(previous, _)| *previous != viewport);
+        let mut controls = self.controls.borrow_mut();
+        if controls.dirty || viewport_changed {
             let root = self
                 .document
                 .styles
-                .resolve(&self.document.tree, |_, _| Default::default());
-            let geometry = geometry::layout(&root, size, &self.fonts, |src| {
-                (src == MARKER).then_some(MARKER_SIZE.map(|extent| extent as f32))
-            })
+                .resolve(&self.document.tree, |path, widget| {
+                    controls.state(path, widget)
+                });
+            let coins = controls.coins.to_string();
+            let geometry = geometry::layout_with_text(
+                &root,
+                size,
+                &self.fonts,
+                |src| (src == MARKER).then_some(MARKER_SIZE.map(|extent| extent as f32)),
+                |binding| controls.text(binding, &coins),
+            )
             .map_err(drawing_error)?;
-            self.prepared = Some((size, UiDrawList::prepare(geometry)));
-            eprintln!(
-                "ui overlay: prepared {}x{} logical pixels",
-                size[0], size[1]
-            );
+            controls.set_layout(&geometry, viewport.display_scale());
+            controls.dirty = false;
+            self.prepared = Some((viewport, UiDrawList::prepare(geometry)));
+            if viewport_changed {
+                eprintln!(
+                    "ui overlay: prepared {}x{} logical pixels",
+                    size[0], size[1]
+                );
+            }
         }
+        drop(controls);
         let marker = self.marker(resources)?;
         let prepared = &self.prepared.as_ref().expect("prepared current viewport").1;
         let mut glyphs = self.atlas.begin_frame(resources).map_err(drawing_error)?;
@@ -107,12 +126,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .transpose()?
         .unwrap_or(720);
     let (reload, document) = UiReload::load(directory.join("hud.xml"), directory.join("hud.css"))?;
+    let controls = Rc::new(RefCell::new(Controls::default()));
     let mut overlay = Overlay {
         reload,
         document,
         fonts: fonts()?,
         atlas: GlyphAtlas::default(),
         image: None,
+        controls: Rc::clone(&controls),
         prepared: None,
     };
     let app = App::new()
@@ -120,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_canvas(move |_, viewport, resources, canvas| {
             overlay.draw(viewport, resources, canvas)
         });
-    run_scene(app)?;
+    run_scene(app, controls)?;
     Ok(())
 }
 
@@ -128,7 +149,7 @@ fn fonts() -> Result<FontBook, FontLoadError> {
     let mut fonts = FontBook::default();
     fonts.add_face(
         "PT Serif",
-        include_bytes!("../../ui/tests/fixtures/fonts/PT_Serif-Web-Regular.ttf").to_vec(),
+        include_bytes!("../../../ui/tests/fixtures/fonts/PT_Serif-Web-Regular.ttf").to_vec(),
         0,
         "HUD",
         400,
@@ -137,7 +158,7 @@ fn fonts() -> Result<FontBook, FontLoadError> {
     Ok(fonts)
 }
 
-fn run_scene(mut app: App) -> Result<(), RenderError> {
+fn run_scene(mut app: App, controls: Rc<RefCell<Controls>>) -> Result<(), RenderError> {
     let mut meshes = MeshRegistry::default();
     let mesh = meshes.insert(Mesh::cube().with_checkerboard());
     let world = app.world_mut();
@@ -164,6 +185,7 @@ fn run_scene(mut app: App) -> Result<(), RenderError> {
             },
         )
         .unwrap();
+    controls::install(&mut app, cube, controls);
     app.run_scene(meshes, [0.016, 0.023, 0.035, 1.0])
 }
 

@@ -19,7 +19,7 @@ engine-physics = { workspace = true, optional = true }
 engine-platform.workspace = true
 engine-render.workspace = true
 engine-scene = { workspace = true, optional = true }
-engine-ui = { workspace = true, features = ["canvas"], optional = true }
+engine-ui = { workspace = true, features = ["canvas", "input"], optional = true }
 ron = { version = "0.10", optional = true }
 serde.workspace = true
 
@@ -40,6 +40,7 @@ required-features = ["hot-reload"]
 [[example]]
 name = "ui_overlay"
 required-features = ["hot-reload", "ui"]
+test = true
 
 [[example]]
 name = "deflection_arena"

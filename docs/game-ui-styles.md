@@ -78,6 +78,8 @@ Resolve the stylesheet and lay out the tree using the logical Canvas viewport. P
 
 To try it, run `cargo run --locked -p engine-app --features hot-reload,ui --example ui_overlay`. Resize the window and edit the [sample layout](../crates/app/examples/fixtures/ui_overlay/hud.xml) or [stylesheet](../crates/app/examples/fixtures/ui_overlay/hud.css) while it runs. The example also accepts a directory containing `hud.xml` and `hud.css` after `--`, with an optional initial window width. A syntax error identifies the file, line and column. The current overlay stays visible until both files parse successfully. [ADR 0034](adr/0034-authored-ui-overlay.md).
 
+Activate **Collect coin** to update the bound HUD value. Tab and Shift+Tab move focus. Enter and Space activate a focused button. The pause button and Escape open or close the modal menu. Move the cube with A/D or the arrow keys. Space with no focused control and a held left click on the scene also move the cube right, so you can check that activating an interface button leaves the cube in place.
+
 The fixture puts two reusable cards in a row. Each card puts its image beside a column containing a label and button. Card width is 40% of the HUD content width with a minimum of 120 and maximum of 160 logical pixels. [XML fixture](../crates/ui/tests/fixtures/geometry.xml) · [CSS fixture](../crates/ui/tests/fixtures/geometry.css).
 
 | Physical viewport | Scale | Logical viewport | Logical card origins | Logical card size | First card in physical pixels `(x, y, w, h)` |

@@ -41,6 +41,8 @@ pub struct Widget {
     id: Option<String>,
     classes: Vec<String>,
     kind: WidgetKind,
+    binding: Option<String>,
+    action: Option<String>,
     children: Arc<[Widget]>,
 }
 
@@ -58,6 +60,16 @@ impl Widget {
     /// Returns the widget type and its authored content.
     pub fn kind(&self) -> &WidgetKind {
         &self.kind
+    }
+
+    /// Name of the game-published text for this label or button.
+    pub fn binding(&self) -> Option<&str> {
+        self.binding.as_deref()
+    }
+
+    /// Name of the action declared by this button.
+    pub fn action(&self) -> Option<&str> {
+        self.action.as_deref()
     }
 
     /// Returns the panel's children, or an empty slice for a leaf.
@@ -224,6 +236,16 @@ impl Parser<'_> {
         }
 
         let classes = tag.classes();
+        let binding = if matches!(tag.name.as_str(), "label" | "button") {
+            self.optional_token(&mut tag, "bind")?
+        } else {
+            None
+        };
+        let action = if tag.name == "button" {
+            self.optional_token(&mut tag, "action")?
+        } else {
+            None
+        };
         let widget = match tag.name.as_str() {
             "label" => WidgetKind::Label {
                 text: self.required(&mut tag, "text")?,
@@ -260,6 +282,8 @@ impl Parser<'_> {
             id,
             classes,
             kind: widget,
+            binding,
+            action,
             children: Arc::default(),
         })
     }
@@ -283,6 +307,8 @@ impl Parser<'_> {
             id,
             classes,
             kind: WidgetKind::Panel,
+            binding: None,
+            action: None,
             children: children.into(),
         })
     }
@@ -346,6 +372,14 @@ impl Parser<'_> {
     fn required(&self, tag: &mut Tag, name: &str) -> Result<String, LayoutError> {
         tag.take(name)
             .ok_or_else(|| self.error(tag.position, format!("<{}> requires {name}", tag.name)))
+    }
+
+    fn optional_token(&self, tag: &mut Tag, name: &str) -> Result<Option<String>, LayoutError> {
+        let value = tag.take(name);
+        if let Some(value) = &value {
+            self.check_token(tag, name, value)?;
+        }
+        Ok(value)
     }
 
     fn check_token(&self, tag: &Tag, attr: &str, value: &str) -> Result<(), LayoutError> {

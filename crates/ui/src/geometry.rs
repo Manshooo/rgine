@@ -112,14 +112,33 @@ pub fn layout<'style, 'tree>(
     root: &'style StyledWidget<'tree>,
     viewport: [f32; 2],
     fonts: &FontBook,
+    image_size: impl FnMut(&str) -> Option<[f32; 2]>,
+) -> Result<WidgetBox<'style, 'tree>, GeometryError> {
+    layout_with_text(root, viewport, fonts, image_size, |_| None)
+}
+
+/// Resolves widget geometry using game-published text for named bindings.
+/// A missing binding uses the widget's literal text. Both measurement and
+/// drawing use the same resolved text.
+pub fn layout_with_text<'style, 'tree>(
+    root: &'style StyledWidget<'tree>,
+    viewport: [f32; 2],
+    fonts: &FontBook,
     mut image_size: impl FnMut(&str) -> Option<[f32; 2]>,
+    mut bound_text: impl FnMut(&str) -> Option<&'style str>,
 ) -> Result<WidgetBox<'style, 'tree>, GeometryError> {
     if !viewport.into_iter().all(valid_extent) {
         return Err(GeometryError::InvalidViewport);
     }
     let mut tree = TaffyTree::new();
     tree.disable_rounding();
-    let root_id = insert(&mut tree, root, Some(viewport), &mut image_size)?;
+    let root_id = insert(
+        &mut tree,
+        root,
+        Some(viewport),
+        &mut image_size,
+        &mut bound_text,
+    )?;
     let mut failure = None;
     tree.compute_layout_with_measure(
         root_id,
@@ -154,6 +173,7 @@ pub fn layout<'style, 'tree>(
 struct Node<'style, 'tree> {
     styled: &'style StyledWidget<'tree>,
     intrinsic: [f32; 2],
+    content: Option<&'style str>,
     text: Option<(Option<f32>, TextLayout)>,
 }
 
@@ -179,9 +199,8 @@ impl Node<'_, '_> {
         fonts: &FontBook,
         width: Option<f32>,
     ) -> Result<Option<&TextLayout>, GeometryError> {
-        let text = match self.styled.widget.kind() {
-            WidgetKind::Label { text } | WidgetKind::Button { text } => text,
-            _ => return Ok(None),
+        let Some(text) = self.content else {
+            return Ok(None);
         };
         if !self
             .text
@@ -205,6 +224,7 @@ fn insert<'style, 'tree>(
     styled: &'style StyledWidget<'tree>,
     viewport: Option<[f32; 2]>,
     image_size: &mut impl FnMut(&str) -> Option<[f32; 2]>,
+    bound_text: &mut impl FnMut(&str) -> Option<&'style str>,
 ) -> Result<NodeId, GeometryError> {
     let style = box_style(&styled.style, viewport)
         .ok_or_else(|| GeometryError::InvalidWidget(widget_name(styled)))?;
@@ -217,9 +237,20 @@ fn insert<'style, 'tree>(
     } else {
         [0.0; 2]
     };
+    let content = match styled.widget.kind() {
+        WidgetKind::Label { text } | WidgetKind::Button { text } => Some(
+            styled
+                .widget
+                .binding()
+                .and_then(&mut *bound_text)
+                .unwrap_or(text),
+        ),
+        _ => None,
+    };
     let context = Node {
         styled,
         intrinsic,
+        content,
         text: None,
     };
     if styled.children.is_empty() {
@@ -230,7 +261,7 @@ fn insert<'style, 'tree>(
     let children = styled
         .children
         .iter()
-        .map(|child| insert(tree, child, None, image_size))
+        .map(|child| insert(tree, child, None, image_size, bound_text))
         .collect::<Result<Vec<_>, _>>()?;
     let node = tree
         .new_with_children(style, &children)
