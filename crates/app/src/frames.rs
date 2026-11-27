@@ -8,7 +8,7 @@ use engine_render::resources::{ResourceError, ResourceTable};
 use engine_render::scene::{MeshRegistry, Scene};
 use engine_render::{DrawOutcome, Drawable};
 
-use crate::capture::Pending;
+use crate::capture::{FrameCapture, Pending};
 use crate::scene;
 
 mod benchmark;
@@ -84,6 +84,7 @@ pub(crate) struct Frames {
     size: [u32; 2],
     occluded: bool,
     benchmark: Option<Benchmark>,
+    gpu_timing: bool,
     #[cfg(feature = "hot-reload")]
     shader_reload: Option<ShaderReload>,
 }
@@ -98,6 +99,7 @@ impl Frames {
             size: [0, 0],
             occluded: false,
             benchmark: None,
+            gpu_timing: false,
             #[cfg(feature = "hot-reload")]
             shader_reload: None,
         }
@@ -110,6 +112,16 @@ impl Frames {
             self.shader_reload = None;
         }
         self
+    }
+
+    pub(crate) fn enable_gpu_timing(&mut self) {
+        self.gpu_timing = true;
+    }
+
+    pub(crate) fn collect_gpu_timings(&mut self, capture: &mut FrameCapture, finish: bool) {
+        if let Some(Surface::Ready(drawable)) = &mut self.surface {
+            capture.record_gpu(drawable.collect_gpu_timings(finish));
+        }
     }
 
     #[cfg(feature = "hot-reload")]
@@ -285,14 +297,14 @@ impl Frames {
             let start = Instant::now();
             let mut drawable = if self.is_benchmark() {
                 Drawable::new_for_benchmark(source, self.size)
+            } else if self.gpu_timing {
+                Drawable::new_with_gpu_timing(source, self.size)
             } else {
                 Drawable::new(source, self.size)
             }
             .map_err(RenderError::Graphics)?;
             let startup = start.elapsed();
-            if capture.is_some() {
-                drawable.begin_frame_capture();
-            }
+            begin_capture(&mut drawable, capture.as_deref());
             if let Some(scene) = &self.scene {
                 drawable.set_directional_light(scene.light);
                 drawable.set_hemisphere_light(scene.hemisphere_light);
@@ -317,9 +329,7 @@ impl Frames {
         let interpolating = self.is_interpolating();
         if let Some(Surface::Ready(drawable)) = &mut self.surface {
             drawable.resize(self.size);
-            if capture.is_some() {
-                drawable.begin_frame_capture();
-            }
+            begin_capture(drawable, capture.as_deref());
             let end_of_orbit =
                 if let (Some(benchmark), Some(scene)) = (&self.benchmark, &mut self.scene) {
                     benchmark.pose(&mut scene.snapshot)?
@@ -364,6 +374,16 @@ impl Frames {
             return Ok(outcome);
         }
         Ok(DrawOutcome::Idle)
+    }
+}
+
+fn begin_capture(drawable: &mut Drawable, capture: Option<&Pending>) {
+    if let Some(capture) = capture {
+        if let Some(id) = capture.gpu_frame_id {
+            drawable.begin_gpu_frame_capture(id);
+        } else {
+            drawable.begin_frame_capture();
+        }
     }
 }
 

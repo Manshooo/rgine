@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use super::{Canvas, Vec2, Viewport};
 use crate::RenderError;
-use crate::profile::RenderSample;
+use crate::profile::PassProfile;
 use crate::resources::{
     BufferDescriptor, BufferHandle, BufferKind, ResourceError, ResourceTable, SampledBinding,
     SampledGroupHandle, SamplerDescriptor, TextureDescriptor, checked_gpu,
@@ -109,11 +109,13 @@ impl CanvasRenderer {
         encoder: &mut wgpu::CommandEncoder,
         output: &wgpu::TextureView,
         format: wgpu::TextureFormat,
-        profile: Option<&mut RenderSample>,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<usize, RenderError> {
         let buffer = self.buffer.expect("prepared canvas buffer").0;
+        let (timestamp_writes, mut work) = profile.record("screen-space canvas");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("screen-space canvas"),
+            timestamp_writes,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 depth_slice: None,
@@ -130,7 +132,6 @@ impl CanvasRenderer {
             0,
             table.gpu_buffer(buffer)?.slice(..self.bytes.len() as u64),
         );
-        let mut work = profile.map(|profile| profile.pass("screen-space canvas"));
         if let Some(work) = &mut work {
             work.pipeline_changes = 1;
         }

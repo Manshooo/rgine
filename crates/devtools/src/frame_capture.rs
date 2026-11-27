@@ -11,6 +11,8 @@ struct Capture {
     build_profile: String,
     frame_limit: usize,
     omitted_attempts: u64,
+    #[serde(default)]
+    gpu_requested: bool,
     graphics: Vec<Value>,
     frames: Vec<Frame>,
 }
@@ -36,6 +38,23 @@ struct Frame {
     upload_cpu_ns: u64,
     pipeline_creations: usize,
     passes: Vec<Pass>,
+    gpu: Option<GpuSample>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum GpuSample {
+    Unavailable,
+    Dropped,
+    Incomplete,
+    Complete { passes: Vec<GpuPass> },
+}
+
+#[derive(Deserialize)]
+struct GpuPass {
+    name: String,
+    offset_ns: u64,
+    duration_ns: u64,
 }
 
 #[derive(Deserialize)]
@@ -106,6 +125,8 @@ pub fn inspect(mut input: Value) -> Result<(Value, Value), Box<dyn Error>> {
     let mut presents = Vec::new();
     let mut ranges = BTreeMap::<&str, Vec<u64>>::new();
     let mut passes = BTreeMap::<&str, Work>::new();
+    let mut gpu_tracks = BTreeMap::<&str, (usize, Vec<u64>)>::new();
+    let mut gpu_outcomes = BTreeMap::<&str, usize>::new();
     let mut outcomes = BTreeMap::<&str, usize>::new();
     let mut uploaded = 0;
     let mut pipelines = 0;
@@ -166,10 +187,43 @@ pub fn inspect(mut input: Value) -> Result<(Value, Value), Box<dyn Error>> {
                 serde_json::to_value(&pass.work)?,
             ));
         }
+        if capture.gpu_requested {
+            let outcome = match &frame.gpu {
+                Some(GpuSample::Complete { passes }) => {
+                    for pass in passes {
+                        let next_track = gpu_tracks.len() + 3;
+                        let (track, samples) = gpu_tracks.entry(&pass.name).or_insert_with(|| {
+                            events.push(json!({
+                                "ph":"M","pid":1,"tid":next_track,"name":"thread_name",
+                                "args":{"name":format!("GPU (frame-relative) {}", pass.name)}
+                            }));
+                            (next_track, Vec::new())
+                        });
+                        samples.push(pass.duration_ns);
+                        events.push(json!({
+                            "ph":"X","pid":1,"tid":track,"cat":"gpu","name":pass.name,
+                            "ts":us(frame.start_ns.saturating_add(pass.offset_ns)),
+                            "dur":us(pass.duration_ns),
+                            "args":{"frame_id":frame.id,"gpu_offset_ns":pass.offset_ns}
+                        }));
+                    }
+                    "complete"
+                }
+                Some(GpuSample::Dropped) => "dropped",
+                Some(GpuSample::Unavailable) => "unavailable",
+                Some(GpuSample::Incomplete) => "incomplete",
+                None => "no_submission",
+            };
+            *gpu_outcomes.entry(outcome).or_default() += 1;
+        }
     }
     let ranges: BTreeMap<_, _> = ranges
         .into_iter()
         .map(|(name, values)| (name, percentiles(values)))
+        .collect();
+    let gpu_ms_by_pass: BTreeMap<_, _> = gpu_tracks
+        .into_iter()
+        .map(|(name, (_, values))| (name, percentiles(values)))
         .collect();
     let summary = json!({
         "build_profile":capture.build_profile,"graphics":capture.graphics,
@@ -178,7 +232,8 @@ pub fn inspect(mut input: Value) -> Result<(Value, Value), Box<dyn Error>> {
         "redraw_requests":total_redraws,"catch_up_steps":caught_up,
         "attempt_elapsed_ms":percentiles(attempts),"present_interval_ms":percentiles(presents),
         "replay_present_ms":intervals.and_then(percentiles),"cpu_ms_by_range":ranges,
-        "upload_bytes":uploaded,"pipeline_creations":pipelines,"pass_totals":passes
+        "upload_bytes":uploaded,"pipeline_creations":pipelines,"pass_totals":passes,
+        "gpu_requested":capture.gpu_requested,"gpu_outcomes":gpu_outcomes,"gpu_ms_by_pass":gpu_ms_by_pass
     });
     Ok((
         json!({"traceEvents":events, "displayTimeUnit":"ms"}),
@@ -239,19 +294,32 @@ mod tests {
                           "pipeline_changes":1,"bind_group_changes":1,"bind_group_sets":2}]
             })
         };
-        let (trace, summary) = inspect(json!({
+        let mut captured = json!({
             "schema_version":1,"build_profile":"debug","frame_limit":3,"omitted_attempts":1,
             "graphics":[],"frames":[
                 frame(1,"presented",Some(22_000_000),None), frame(2,"retry",None,None),
                 frame(3,"presented",Some(62_000_000),Some(40_000_000))
             ]
-        }))
-        .unwrap();
+        });
+        let (_, previous_schema) = inspect(captured.clone()).unwrap();
+        assert_eq!(previous_schema["gpu_requested"], false);
+        captured["gpu_requested"] = json!(true);
+        captured["frames"][0]["gpu"] = json!({"status":"unavailable"});
+        captured["frames"][2]["gpu"] = json!({
+            "status":"complete","passes":[{"name":"opaque scene","offset_ns":2_000,"duration_ns":8_000}]
+        });
+        let (trace, summary) = inspect(captured).unwrap();
         assert_eq!(summary["successful_presents"], 2);
         assert_eq!(summary["outcomes"]["retry"], 1);
         assert_eq!(summary["attempt_elapsed_ms"]["median_ms"], 5.0);
         assert_eq!(summary["present_interval_ms"]["p99_ms"], 40.0);
         assert_eq!(summary["pass_totals"]["opaque scene"]["triangles"], 6);
+        assert_eq!(summary["gpu_outcomes"]["unavailable"], 1);
+        assert_eq!(summary["gpu_outcomes"]["no_submission"], 1);
+        assert_eq!(
+            summary["gpu_ms_by_pass"]["opaque scene"]["median_ms"],
+            0.008
+        );
         let events = trace["traceEvents"].as_array().unwrap();
         assert!(events.iter().any(|e| e["name"] == "fixed step"
             && e["args"]["frame_id"] == 3
@@ -261,5 +329,9 @@ mod tests {
                 .iter()
                 .any(|e| e["name"] == "opaque scene" && e["ph"] == "C")
         );
+        assert!(events.iter().any(|e| e["cat"] == "gpu"
+            && e["args"]["frame_id"] == 3
+            && e["ts"] == 60002.0
+            && e["dur"] == 8.0));
     }
 }

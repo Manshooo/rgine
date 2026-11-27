@@ -20,7 +20,7 @@ pub(super) fn run(
     clear: [f64; 4],
 ) -> Result<(), Box<dyn Error>> {
     let usage =
-        "usage: deflection_arena --profile <original|batched|hidden> <on|off> <report.json>";
+        "usage: deflection_arena --profile <original|batched|hidden> <off|on|gpu> <report.json>";
     let hud = args
         .next()
         .and_then(|arg| arg.into_string().ok())
@@ -31,8 +31,10 @@ pub(super) fn run(
         "hidden" => HudMode::Hidden,
         _ => return Err(usage.into()),
     };
-    let capture = match args.next().as_deref().and_then(|arg| arg.to_str()) {
+    let capture_mode = args.next().ok_or(usage)?;
+    let capture = match capture_mode.to_str() {
         Some("on") => CaptureLimit::new(MEASURED * 2),
+        Some("gpu") => CaptureLimit::new(MEASURED * 2).map(CaptureLimit::with_gpu_timing),
         Some("off") => None,
         _ => return Err(usage.into()),
     };

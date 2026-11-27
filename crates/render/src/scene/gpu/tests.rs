@@ -6,6 +6,7 @@ use engine_core::glam::{Mat4, Vec3};
 
 use super::*;
 use crate::canvas::{Affine2, Canvas, CanvasRenderer, Rect, Vec2, Viewport};
+use crate::profile::{GpuSample, RenderSample, gpu::GpuProfiler};
 use crate::resources::ResourceError;
 use crate::scene::SceneCamera;
 use crate::shaders::SHADER_VARIANTS;
@@ -31,7 +32,8 @@ fn validate_catalogue(descriptor: wgpu::InstanceDescriptor) {
     let mut covered = HashSet::new();
     for mode in [BindingMode::Classic, BindingMode::Bindless] {
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-        let mut table = ResourceTable::request(&adapter, mode == BindingMode::Classic).unwrap();
+        let mut table =
+            ResourceTable::request(&adapter, mode == BindingMode::Classic, false).unwrap();
         assert_eq!(table.binding_mode(), mode);
         let mut renderer = SceneRenderer::default();
         for &format in SCENE_COLOR_FORMATS {
@@ -118,7 +120,7 @@ fn shader_reload_publishes_pipeline_replacements_together() {
     descriptor.backend_options.noop.enable = true;
     let instance = wgpu::Instance::new(descriptor);
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut table = ResourceTable::request(&adapter, true, false).unwrap();
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut pipelines = ScenePipelines::default();
     pipelines.prepare(&mut table, format, true).unwrap();
@@ -171,7 +173,7 @@ fn classic_and_bindless_draw_the_same_materials() {
     let select_adapter =
         || pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let adapter = select_adapter();
-    let mut automatic = ResourceTable::request(&adapter, false).unwrap();
+    let mut automatic = ResourceTable::request(&adapter, false, false).unwrap();
     let info = adapter.get_info();
     let limits = adapter.limits();
     eprintln!(
@@ -187,7 +189,7 @@ fn classic_and_bindless_draw_the_same_materials() {
         automatic.device.features(),
         wgpu::Features::TEXTURE_BINDING_ARRAY
     );
-    let mut classic = ResourceTable::request(&select_adapter(), true).unwrap();
+    let mut classic = ResourceTable::request(&select_adapter(), true, false).unwrap();
     assert_eq!(classic.binding_mode(), BindingMode::Classic);
     assert!(classic.device.features().is_empty());
 
@@ -275,7 +277,7 @@ fn directional_shadow_darkens_the_receiver_and_follows_the_occluder() {
         ],
     };
     for force_classic in [true, false] {
-        let mut table = ResourceTable::request(&adapter, force_classic).unwrap();
+        let mut table = ResourceTable::request(&adapter, force_classic, false).unwrap();
         let mut renderer = SceneRenderer {
             light: DirectionalLight::new(Vec3::new(-1.0, 1.0, 0.0), 2.0).unwrap(),
             skybox_enabled: true,
@@ -326,7 +328,8 @@ fn dielectric_sphere_shows_floor_bounce_without_direct_light() {
         }],
     };
     for mode in [BindingMode::Classic, BindingMode::Bindless] {
-        let mut table = ResourceTable::request(&adapter, mode == BindingMode::Classic).unwrap();
+        let mut table =
+            ResourceTable::request(&adapter, mode == BindingMode::Classic, false).unwrap();
         assert_eq!(table.binding_mode(), mode);
         let mut renderer = SceneRenderer {
             light: DirectionalLight::new(Vec3::Y, 2.0).unwrap(),
@@ -358,7 +361,7 @@ fn skybox_responds_to_rotation_and_remains_behind_opaque_geometry() {
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let info = adapter.get_info();
-    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut table = ResourceTable::request(&adapter, true, false).unwrap();
     let mut meshes = MeshRegistry::default();
     let cube = meshes.insert(Mesh::cube());
     let mut renderer = SceneRenderer {
@@ -417,7 +420,7 @@ fn metallic_and_roughness_change_direct_lighting() {
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let info = adapter.get_info();
-    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut table = ResourceTable::request(&adapter, true, false).unwrap();
     let mut meshes = MeshRegistry::default();
     let keys = [(0.0, 0.30), (0.0, 0.72), (1.0, 0.30), (1.0, 0.72)].map(|(metallic, roughness)| {
         meshes.insert(Mesh::sphere().with_pbr_material(PbrMaterial::new(metallic, roughness)))
@@ -627,7 +630,7 @@ fn imported_ktx2_material_samples_mips_and_color_space() {
     let mut classic = None;
     for force_classic in [true, false] {
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-        let mut table = ResourceTable::request(&adapter, force_classic).unwrap();
+        let mut table = ResourceTable::request(&adapter, force_classic, false).unwrap();
         if !force_classic && table.binding_mode() == BindingMode::Classic {
             break;
         }
@@ -736,6 +739,12 @@ fn scene_pixels_at_size(
     });
     let mut encoder = table.device.create_command_encoder(&Default::default());
     let view = color.create_view(&Default::default());
+    let mut gpu = GpuProfiler::new(&table.device, &table.queue);
+    let mut sample = RenderSample::default();
+    let mut profile = PassProfile {
+        sample: Some(&mut sample),
+        queries: gpu.as_mut().and_then(GpuProfiler::begin),
+    };
     renderer
         .encode(
             table,
@@ -744,19 +753,26 @@ fn scene_pixels_at_size(
             &view,
             format,
             wgpu::Color::BLACK,
-            None,
+            &mut profile,
         )
         .unwrap();
     let draws = overlay.map_or(0, |(renderer, canvas, viewport)| {
         if renderer.prepare(table, canvas, viewport, format).unwrap() {
             renderer
-                .encode(table, &mut encoder, &view, format, None)
+                .encode(table, &mut encoder, &view, format, &mut profile)
                 .unwrap()
         } else {
             0
         }
     });
     assert_eq!(renderer.pipeline_creations() - prepared, 0);
+    if let Some(queries) = profile.queries {
+        queries.resolve(&mut encoder, 42);
+    }
+    assert_eq!(
+        sample.passes.iter().any(|pass| pass.name == "skybox"),
+        renderer.skybox_enabled && scene.camera.is_some()
+    );
     encoder.copy_texture_to_buffer(
         color.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -780,6 +796,24 @@ fn scene_pixels_at_size(
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
     recv.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+    if let Some(gpu) = &mut gpu {
+        let results = gpu.poll(&table.device, false);
+        let [(42, GpuSample::Complete { passes })] = results.as_slice() else {
+            panic!("expected completed GPU timestamps for frame 42: {results:?}");
+        };
+        assert_eq!(
+            passes.iter().map(|pass| pass.name).collect::<Vec<_>>(),
+            sample
+                .passes
+                .iter()
+                .map(|pass| pass.name)
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            passes.iter().any(|pass| pass.name == "screen-space canvas"),
+            draws > 0
+        );
+    }
     (slice.get_mapped_range().unwrap().to_vec(), draws)
 }
 
@@ -789,7 +823,7 @@ fn canvas_batches_preserve_order_clipping_and_scale_over_a_3d_scene() {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut table = ResourceTable::request(&adapter, true, true).unwrap();
     let mut meshes = MeshRegistry::default();
     let cube = meshes.insert(Mesh::cube());
     let scene = Scene {

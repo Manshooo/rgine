@@ -10,7 +10,7 @@ Run from the repository root in a Visual Studio Developer PowerShell.
 $env:WGPU_BACKEND = 'dx12'
 $env:RGINE_FORCE_CLASSIC = '1'
 foreach ($hud in @('original', 'batched', 'hidden')) {
-    foreach ($capture in @('off', 'on')) {
+    foreach ($capture in @('off', 'on', 'gpu')) {
         $name = "${hud}-${capture}"
         cargo run --locked -p engine-app --features physics --example deflection_arena -- --profile $hud $capture "$name.json"
         cargo run --locked -p engine-devtools --bin frame_capture -- "$name.json" "$name.trace.json" "$name.summary.json"
@@ -35,3 +35,17 @@ Present intervals are measured between successive returns from the application's
 | Hidden | 0.166 | 0.037 | 0.449 | 1.337 | 34.27 | 2816.97 | 17547 |
 
 The directional shadow and opaque passes each submitted the same geometry. The original and batched workloads matched triangle counts in every corresponding frame. Batching reduced render preparation, encoding, and upload work while preserving those counts. The observed CPU-capture median interval changes were −0.153 ms, +0.045 ms, and −0.775 ms for the original, batched, and hidden HUDs. Each cell is one replay run, so run-to-run variation is part of those differences.
+
+### GPU pass timings
+
+The `gpu` mode adds timestamp queries to CPU capture. It uses four readback slots and collects completed samples by the ID of the frame that issued each query. An unsupported adapter reports `unavailable` and retains the CPU ranges and render counters. A full readback ring reports `dropped`. A sample that fails or stays pending at the end of the capture is `incomplete`.
+
+| HUD | CPU + GPU present interval, median / p95 / p99 (ms) | Median change from CPU-only (ms) | Directional shadow GPU, median / p95 / p99 (ms) | Opaque scene GPU, median / p95 / p99 (ms) |
+|---|---:|---:|---:|---:|
+| Original | 25.575 / 43.672 / 46.042 | +0.713 | 0.043 / 0.054 / 0.055 | 0.058 / 0.071 / 0.072 |
+| Batched | 3.524 / 4.917 / 6.096 | +0.126 | 0.029 / 0.033 / 0.033 | 0.040 / 0.043 / 0.044 |
+| Hidden | 3.184 / 4.129 / 4.741 | +0.240 | 0.027 / 0.030 / 0.030 | 0.039 / 0.042 / 0.043 |
+
+Each GPU run returned 240 complete results. Perfetto imported 240 slices for each GPU pass in the original run. On this debug fixture, the largest measured change from batching was in CPU render preparation and command encoding. The offscreen canvas test on DX12 verifies a `screen-space canvas` timestamp when the pass runs.
+
+The inspector places each GPU group at the CPU start of its associated frame and preserves the GPU offsets within the group. Use `frame_id` to compare work across clocks. Timestamp differences are converted to nanoseconds with the submitting queue's timestamp period. [wgpu timestamp query example](https://wgpu.rs/doc/wgpu_examples/timestamp_queries/index.html)

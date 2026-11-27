@@ -8,7 +8,8 @@ use wgpu::CurrentSurfaceTexture;
 
 use crate::canvas::{Canvas, CanvasRenderer, Viewport};
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
-use crate::profile::{Graphics as CaptureGraphics, RenderSample, Span};
+use crate::profile::gpu::GpuProfiler;
+use crate::profile::{GpuSample, Graphics as CaptureGraphics, PassProfile, RenderSample, Span};
 use crate::resources::{BindingMode, ResourceError, ResourceTable};
 use crate::scene::{
     DirectionalLight, HemisphereLight, MeshRegistry, SCENE_COLOR_FORMATS, Scene, SceneRenderer,
@@ -72,6 +73,8 @@ pub struct Drawable {
     surface_format: Option<wgpu::TextureFormat>,
     present_mode: Option<wgpu::PresentMode>,
     capture: Option<(usize, RenderSample)>,
+    capture_frame_id: Option<usize>,
+    gpu_profiler: Option<GpuProfiler>,
     immediate: bool,
     last_present: Option<Instant>,
 }
@@ -80,22 +83,37 @@ impl Drawable {
     /// Initializes the GPU backend for a live surface. Call outside native
     /// lifecycle callbacks, since adapter and device creation can block.
     pub fn new(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
-        Self::open(source, size, false)
+        Self::open(source, size, false, false)
+    }
+
+    /// Requests timestamp queries when the selected adapter supports them.
+    pub fn new_with_gpu_timing(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
+        Self::open(source, size, false, true)
     }
 
     /// Opens a drawable that requires Immediate presentation, DX12 and classic bindings.
     pub fn new_for_benchmark(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
-        Self::open(source, size, true)
+        Self::open(source, size, true, false)
     }
 
-    fn open(source: SurfaceSource, size: [u32; 2], immediate: bool) -> Result<Self, RenderError> {
+    fn open(
+        source: SurfaceSource,
+        size: [u32; 2],
+        immediate: bool,
+        gpu_timing: bool,
+    ) -> Result<Self, RenderError> {
         let frame_graph = clear_graph().map_err(|error| RenderError(error.to_string()))?;
         let backend::Graphics {
             surface,
             instance,
             adapter,
             resources,
-        } = backend::open(&source)?;
+        } = backend::open(&source, gpu_timing)?;
+        let gpu_profiler = if gpu_timing {
+            GpuProfiler::new(&resources.device, &resources.queue)
+        } else {
+            None
+        };
         let info = adapter.get_info();
         if immediate
             && (info.backend != wgpu::Backend::Dx12
@@ -126,6 +144,8 @@ impl Drawable {
             surface_format: None,
             present_mode: None,
             capture: None,
+            capture_frame_id: None,
+            gpu_profiler,
             immediate,
             last_present: None,
         })
@@ -144,8 +164,22 @@ impl Drawable {
         }
     }
 
+    /// Captures CPU work and attempts GPU timing for the caller's frame ID.
+    pub fn begin_gpu_frame_capture(&mut self, frame_id: usize) {
+        self.begin_frame_capture();
+        self.capture_frame_id = Some(frame_id);
+    }
+
+    /// Collects completed GPU samples. Use the bounded final wait after measurement ends.
+    pub fn collect_gpu_timings(&mut self, finish: bool) -> Vec<(usize, GpuSample)> {
+        self.gpu_profiler
+            .as_mut()
+            .map_or_else(Vec::new, |gpu| gpu.poll(&self.resources.device, finish))
+    }
+
     /// Finishes the current capture, including work done before acquisition.
     pub fn finish_frame_capture(&mut self) -> Option<RenderSample> {
+        self.capture_frame_id = None;
         let (before, mut sample) = self.capture.take()?;
         sample.pipeline_creations = self.pipeline_count() - before;
         sample.uploads = self.resources.profile_uploads.take().unwrap_or_default();
@@ -442,6 +476,31 @@ impl Drawable {
             .device
             .create_command_encoder(&Default::default());
         let color = wgpu::Color { r, g, b, a };
+        let frame_id = self.capture_frame_id;
+        let queries = if let Some((sample, _)) = profile.as_deref_mut().zip(frame_id) {
+            match &mut self.gpu_profiler {
+                Some(gpu) => match gpu.begin() {
+                    Some(queries) => {
+                        sample.gpu = Some(GpuSample::Incomplete);
+                        Some(queries)
+                    }
+                    None => {
+                        sample.gpu = Some(GpuSample::Dropped);
+                        None
+                    }
+                },
+                None => {
+                    sample.gpu = Some(GpuSample::Unavailable);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let mut passes = PassProfile {
+            sample: profile.as_deref_mut(),
+            queries,
+        };
         if let Some((_, scene)) = scene {
             self.scene.encode(
                 &self.resources,
@@ -450,25 +509,20 @@ impl Drawable {
                 &view,
                 format,
                 color,
-                profile.as_deref_mut(),
+                &mut passes,
             )?;
         } else {
-            self.encode_frame(&mut encoder, &view, color)?;
-            if let Some(profile) = &mut profile {
-                profile.pass("clear backbuffer");
-            }
+            Self::encode_frame(&self.frame_graph, &mut encoder, &view, color, &mut passes)?;
         }
         let canvas_draw_calls = if canvas_ready {
-            self.canvas.encode(
-                &self.resources,
-                &mut encoder,
-                &view,
-                format,
-                profile.as_deref_mut(),
-            )?
+            self.canvas
+                .encode(&self.resources, &mut encoder, &view, format, &mut passes)?
         } else {
             0
         };
+        if let Some((queries, frame_id)) = passes.queries.zip(frame_id) {
+            queries.resolve(&mut encoder, frame_id);
+        }
         let buffer = encoder.finish();
         add_span(&mut profile, start, "command encoding");
         let start = profile.as_ref().map(|_| Instant::now());
@@ -501,25 +555,28 @@ impl Drawable {
     }
 
     fn encode_frame(
-        &self,
+        graph: &CompiledGraph<()>,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         color: wgpu::Color,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<(), RenderError> {
-        let [backbuffer] = self.frame_graph.exports() else {
+        let [backbuffer] = graph.exports() else {
             return Err(RenderError(
                 "the frame graph must export one backbuffer".into(),
             ));
         };
-        self.frame_graph.execute(|pass| {
+        graph.execute(|pass| {
             if pass.writes() != [*backbuffer] {
                 return Err(RenderError(format!(
                     "frame pass {:?} does not target the backbuffer",
                     pass.name()
                 )));
             }
+            let (timestamp_writes, _) = profile.record("clear backbuffer");
             drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(pass.name()),
+                timestamp_writes,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,

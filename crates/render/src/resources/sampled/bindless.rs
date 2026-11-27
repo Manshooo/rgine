@@ -212,7 +212,7 @@ mod tests {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-        let mut table = ResourceTable::request(&adapter, false).unwrap();
+        let mut table = ResourceTable::request(&adapter, false, false).unwrap();
         let descriptor = TextureDescriptor::sampled_rgba8([1, 1]);
         let texture = table.create_texture(descriptor).unwrap();
         let sampler = table

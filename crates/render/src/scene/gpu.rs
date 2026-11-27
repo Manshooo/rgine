@@ -11,7 +11,7 @@ use super::{
 };
 use crate::RenderError;
 use crate::graph::{CompiledGraph, RenderGraph};
-use crate::profile::{PassWork, RenderSample};
+use crate::profile::PassProfile;
 use crate::resources::{
     BINDLESS_SAMPLERS, BINDLESS_TEXTURES, BindingMode, BufferDescriptor, BufferHandle, BufferKind,
     ResourceError, ResourceTable, SampledBinding, SampledGroupHandle, SamplerDescriptor,
@@ -397,7 +397,7 @@ impl SceneRenderer {
         output: &wgpu::TextureView,
         format: wgpu::TextureFormat,
         clear: wgpu::Color,
-        mut profile: Option<&mut RenderSample>,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<(), RenderError> {
         let target = self.target.as_ref().expect("scene targets prepared");
         let has_draws = scene.camera.is_some() && !scene.objects.is_empty();
@@ -406,31 +406,22 @@ impl SceneRenderer {
             match pass.data() {
                 ScenePass::DirectionalShadow => {
                     if has_draws {
-                        self.encode_shadows(
-                            table,
-                            scene,
-                            encoder,
-                            &target.shadow.view,
-                            pass.name(),
-                            profile
-                                .as_mut()
-                                .map(|profile| profile.pass(ScenePass::DirectionalShadow.name())),
-                        )?;
+                        self.encode_shadows(table, scene, encoder, &target.shadow.view, profile)?;
                     }
                     return Ok(());
                 }
                 ScenePass::Skybox => {
                     if draw_skybox {
+                        let (timestamp_writes, work) = profile.record(ScenePass::Skybox.name());
                         self.skybox.as_ref().expect("skybox prepared").encode(
                             table,
                             encoder,
                             &self.pipelines.entries[&ScenePipelineKey::skybox(format)],
                             output,
                             clear,
-                            pass.name(),
+                            timestamp_writes,
                         )?;
-                        if let Some(profile) = &mut profile {
-                            let work = profile.pass(ScenePass::Skybox.name());
+                        if let Some(work) = work {
                             work.pipeline_changes = 1;
                             work.binding(true);
                             work.draw(1);
@@ -440,8 +431,10 @@ impl SceneRenderer {
                 }
                 ScenePass::Opaque => {}
             }
+            let (timestamp_writes, mut work) = profile.record(ScenePass::Opaque.name());
             let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(pass.name()),
+                timestamp_writes,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: output,
                     depth_slice: None,
@@ -465,9 +458,6 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
-            let mut work = profile
-                .as_mut()
-                .map(|profile| profile.pass(ScenePass::Opaque.name()));
             if has_draws {
                 let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
                 let key = ScenePipelineKey::new(format, table.binding_mode());
@@ -511,11 +501,13 @@ impl SceneRenderer {
         scene: &Scene,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        name: &str,
-        mut work: Option<&mut PassWork>,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<(), RenderError> {
+        let name = ScenePass::DirectionalShadow.name();
+        let (timestamp_writes, mut work) = profile.record(name);
         let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(name),
+            timestamp_writes,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view,
                 depth_ops: Some(wgpu::Operations {

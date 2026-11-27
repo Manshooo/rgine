@@ -41,9 +41,13 @@ impl ResourceTable {
     pub(crate) fn request(
         adapter: &wgpu::Adapter,
         force_classic: bool,
+        gpu_timing: bool,
     ) -> Result<Self, ResourceError> {
-        let (mode, descriptor) =
-            device_descriptor(adapter.features(), &adapter.limits(), force_classic);
+        let features = adapter.features();
+        let (mode, mut descriptor) = device_descriptor(features, &adapter.limits(), force_classic);
+        if gpu_timing {
+            descriptor.required_features |= features & wgpu::Features::TIMESTAMP_QUERY;
+        }
         let (device, queue) =
             pollster::block_on(adapter.request_device(&descriptor)).map_err(|error| {
                 ResourceError::Backend(format!(

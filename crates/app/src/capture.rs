@@ -3,7 +3,7 @@
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
-use engine_render::profile::{Graphics, PassWork, RenderSample, Span};
+use engine_render::profile::{GpuSample, Graphics, PassWork, RenderSample, Span};
 use serde::Serialize;
 
 use crate::InputRecording;
@@ -13,14 +13,26 @@ const MAX_SPANS: usize = 64;
 
 /// Maximum stored attempts. Collection stops at this limit.
 #[derive(Debug, Clone, Copy)]
-pub struct CaptureLimit(NonZeroUsize);
+pub struct CaptureLimit {
+    attempts: NonZeroUsize,
+    gpu: bool,
+}
 
 impl CaptureLimit {
     /// Accepts between 1 and 10,000 attempts.
     pub fn new(frames: usize) -> Option<Self> {
         NonZeroUsize::new(frames)
             .filter(|frames| frames.get() <= MAX_FRAMES)
-            .map(Self)
+            .map(|attempts| Self {
+                attempts,
+                gpu: false,
+            })
+    }
+
+    /// Also collect GPU pass timings when the adapter supports timestamp queries.
+    pub fn with_gpu_timing(mut self) -> Self {
+        self.gpu = true;
+        self
     }
 }
 
@@ -30,6 +42,7 @@ pub struct FrameCapture {
     schema_version: u32,
     build_profile: &'static str,
     frame_limit: usize,
+    pub(crate) gpu_requested: bool,
     omitted_attempts: u64,
     graphics: Vec<Graphics>,
     frames: Vec<Frame>,
@@ -62,6 +75,8 @@ struct Frame {
     upload_cpu_ns: u64,
     pipeline_creations: usize,
     passes: Vec<PassWork>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu: Option<GpuSample>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +88,7 @@ struct Range {
 
 #[derive(Debug, Default)]
 pub(crate) struct Pending {
+    pub gpu_frame_id: Option<usize>,
     pub start: Option<Instant>,
     pub spans: Spans,
     pub redraw_requests: usize,
@@ -119,10 +135,11 @@ impl FrameCapture {
             } else {
                 "release"
             },
-            frame_limit: limit.0.get(),
+            frame_limit: limit.attempts.get(),
+            gpu_requested: limit.gpu,
             omitted_attempts: 0,
             graphics: Vec::new(),
-            frames: Vec::with_capacity(limit.0.get()),
+            frames: Vec::with_capacity(limit.attempts.get()),
             epoch: Instant::now(),
             previous_present: None,
             pending: Pending::default(),
@@ -130,7 +147,17 @@ impl FrameCapture {
     }
 
     pub(crate) fn pending(&mut self) -> Option<&mut Pending> {
-        (self.frames.len() < self.frame_limit).then_some(&mut self.pending)
+        let count = self.frames.len();
+        self.pending.gpu_frame_id = self.gpu_requested.then_some(count + 1);
+        (count < self.frame_limit).then_some(&mut self.pending)
+    }
+
+    pub(crate) fn record_gpu(&mut self, timings: Vec<(usize, GpuSample)>) {
+        for (id, timing) in timings {
+            let frame = &mut self.frames[id - 1];
+            debug_assert!(matches!(frame.gpu, Some(GpuSample::Incomplete)));
+            frame.gpu = Some(timing);
+        }
     }
 
     pub(crate) fn finish(&mut self, outcome: &'static str, end: Instant) {
@@ -189,6 +216,7 @@ impl FrameCapture {
             upload_cpu_ns: nanos(render.uploads.elapsed),
             pipeline_creations: render.pipeline_creations,
             passes: render.passes,
+            gpu: render.gpu,
         });
     }
 
@@ -292,5 +320,44 @@ mod tests {
         assert!(frames[1]["present_interval_ns"].is_null());
         assert_eq!(frames[2]["id"], 3);
         assert_eq!(frames[2]["present_interval_ns"], 40_000_000);
+    }
+
+    #[test]
+    fn delayed_gpu_results_update_the_attempt_that_submitted_them() {
+        let mut capture = FrameCapture::new(CaptureLimit::new(4).unwrap().with_gpu_timing());
+        for (index, gpu) in [
+            GpuSample::Incomplete,
+            GpuSample::Dropped,
+            GpuSample::Incomplete,
+            GpuSample::Unavailable,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let pending = capture.pending().unwrap();
+            assert_eq!(pending.gpu_frame_id, Some(index + 1));
+            pending.render(
+                Some(RenderSample {
+                    gpu: Some(gpu),
+                    ..Default::default()
+                }),
+                None,
+            );
+            capture.finish("presented", capture.epoch);
+        }
+        let complete = |duration_ns| GpuSample::Complete {
+            passes: vec![engine_render::profile::GpuPassTime {
+                name: "opaque scene",
+                offset_ns: 0,
+                duration_ns,
+            }],
+        };
+        capture.record_gpu(vec![(3, complete(30)), (1, complete(10))]);
+        let json = serde_json::to_value(capture).unwrap();
+        let frames = json["frames"].as_array().unwrap();
+        assert_eq!(frames[0]["gpu"]["passes"][0]["duration_ns"], 10);
+        assert_eq!(frames[1]["gpu"]["status"], "dropped");
+        assert_eq!(frames[2]["gpu"]["passes"][0]["duration_ns"], 30);
+        assert_eq!(frames[3]["gpu"]["status"], "unavailable");
     }
 }

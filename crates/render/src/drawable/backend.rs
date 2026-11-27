@@ -15,15 +15,19 @@ pub(super) struct Graphics {
     pub resources: ResourceTable,
 }
 
-pub(super) fn open(source: &SurfaceSource) -> Result<Graphics, RenderError> {
+pub(super) fn open(source: &SurfaceSource, gpu_timing: bool) -> Result<Graphics, RenderError> {
     try_backends(
         Instance::enabled_backend_features(),
         Backends::from_env(),
-        |backend| open_with_backend(source, backend),
+        |backend| open_with_backend(source, backend, gpu_timing),
     )
 }
 
-fn open_with_backend(source: &SurfaceSource, backend: Backend) -> Result<Graphics, RenderError> {
+fn open_with_backend(
+    source: &SurfaceSource,
+    backend: Backend,
+    gpu_timing: bool,
+) -> Result<Graphics, RenderError> {
     let descriptor = InstanceDescriptor::new_with_display_handle_from_env(Box::new(source.clone()));
     let instance = open_instance(descriptor, backend);
     let surface = create_surface(&instance, source)?;
@@ -44,6 +48,7 @@ fn open_with_backend(source: &SurfaceSource, backend: Backend) -> Result<Graphic
     let resources = ResourceTable::request(
         &adapter,
         std::env::var_os("RGINE_FORCE_CLASSIC").is_some_and(|value| value == "1"),
+        gpu_timing,
     )?;
     Ok(Graphics {
         surface,

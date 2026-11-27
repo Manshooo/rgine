@@ -71,10 +71,11 @@ impl Skybox {
         pipeline: &wgpu::RenderPipeline,
         output: &wgpu::TextureView,
         clear: wgpu::Color,
-        label: &str,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) -> Result<(), RenderError> {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
+            label: Some(super::ScenePass::Skybox.name()),
+            timestamp_writes,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 depth_slice: None,

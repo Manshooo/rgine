@@ -327,6 +327,13 @@ impl App {
         if let Some(draw) = self.canvas.take() {
             frames.set_canvas(draw);
         }
+        if session
+            .as_deref()
+            .and_then(|session| session.capture.as_ref())
+            .is_some_and(|capture| capture.gpu_requested)
+        {
+            frames.enable_gpu_timing();
+        }
         let mut runner = Runner::new(self);
         runner.frames = Some(frames);
         runner.refresh = refresh;
@@ -396,6 +403,7 @@ impl Runner<'_> {
         });
         let mut active = !self.open.is_empty();
         let mut redraw = false;
+        let mut closing = false;
         for event in events {
             match event {
                 // Resume can fire more than once: on platforms that tear
@@ -423,6 +431,7 @@ impl Runner<'_> {
                     event: WindowEvent::CloseRequested | WindowEvent::Destroyed,
                 } if self.open.contains(window) => {
                     active = false;
+                    closing = true;
                     commands.exit();
                 }
                 Event::Window { window, event } if self.open.contains(window) => {
@@ -489,6 +498,19 @@ impl Runner<'_> {
             .zip(replay_present)
         {
             replay.present(now);
+            closing |= replay.presented == replay.recording.step_count();
+        }
+        self.collect_gpu_timings(closing);
+    }
+
+    fn collect_gpu_timings(&mut self, finish: bool) {
+        let capture = self
+            .session
+            .as_deref_mut()
+            .and_then(|session| session.capture.as_mut())
+            .filter(|capture| capture.gpu_requested);
+        if let Some((frames, capture)) = self.frames.as_mut().zip(capture) {
+            frames.collect_gpu_timings(capture, finish);
         }
     }
 
@@ -599,6 +621,9 @@ impl PlatformApp for &mut Runner<'_> {
     }
 
     fn surface_event(&mut self, event: SurfaceEvent) {
+        if matches!(event, SurfaceEvent::Invalidating(window) if self.open.contains(&window)) {
+            self.collect_gpu_timings(false);
+        }
         if let Some(frames) = &mut self.frames {
             match event {
                 SurfaceEvent::Available(window, source, size) if self.open.contains(&window) => {
