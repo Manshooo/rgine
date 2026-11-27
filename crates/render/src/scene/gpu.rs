@@ -416,12 +416,6 @@ impl SceneRenderer {
                                 .as_mut()
                                 .map(|profile| profile.pass(ScenePass::DirectionalShadow.name())),
                         )?;
-                        if let Some(profile) = &mut profile {
-                            let work = profile.pass(ScenePass::Skybox.name());
-                            work.pipeline_changes = 1;
-                            work.binding(true);
-                            work.draw(1);
-                        }
                     }
                     return Ok(());
                 }
@@ -435,6 +429,12 @@ impl SceneRenderer {
                             clear,
                             pass.name(),
                         )?;
+                        if let Some(profile) = &mut profile {
+                            let work = profile.pass(ScenePass::Skybox.name());
+                            work.pipeline_changes = 1;
+                            work.binding(true);
+                            work.draw(1);
+                        }
                     }
                     return Ok(());
                 }
