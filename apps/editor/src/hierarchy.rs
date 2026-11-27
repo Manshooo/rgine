@@ -350,7 +350,7 @@ mod tests {
         let child = state.document.selected.unwrap();
 
         click(&mut state, 38.0, 155.0); // Select root
-        click(&mut state, 295.0, 115.0); // Move
+        click(&mut state, 200.0, 115.0); // Move
         click(&mut state, 38.0, 181.0); // Attempt to parent root under its child
         assert!(state.notice.contains("would create a cycle"));
         assert_eq!(state.moving, Some(root));

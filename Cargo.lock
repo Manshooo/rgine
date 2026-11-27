@@ -549,6 +549,7 @@ name = "engine-editor"
 version = "0.1.0"
 dependencies = [
  "engine-core",
+ "engine-ecs",
  "engine-platform",
  "engine-render",
  "engine-scene",

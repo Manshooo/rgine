@@ -25,16 +25,37 @@ const ROW_HEIGHT: f32 = 26.0;
 pub(crate) struct Layout {
     size: Vec2,
     pub rows: Rect,
+    pub scene: Rect,
     dialog: Rect,
 }
 
 impl Layout {
     pub fn new(size: Vec2) -> Self {
         let width = (size.x - 32.0).max(0.0);
+        let height = (size.y - 208.0).max(0.0);
         let dialog_width = width.min(580.0);
+        let (rows, scene) = if size.x >= 700.0 {
+            let sidebar = (width * 0.38).min(340.0);
+            (
+                rect(16.0, 146.0, sidebar, height),
+                rect(32.0 + sidebar, 146.0, width - sidebar - 16.0, height),
+            )
+        } else {
+            let rows_height = height * 0.35;
+            (
+                rect(16.0, 146.0, width, rows_height),
+                rect(
+                    16.0,
+                    178.0 + rows_height,
+                    width,
+                    (height - rows_height - 32.0).max(0.0),
+                ),
+            )
+        };
         Self {
             size,
-            rows: rect(16.0, 146.0, width, (size.y - 208.0).max(0.0)),
+            rows,
+            scene,
             dialog: rect(
                 (size.x - dialog_width) * 0.5,
                 (size.y * 0.24).min(150.0),
@@ -75,10 +96,9 @@ impl Actions {
             );
             return list;
         }
-        let width = (layout.rows.max.x - layout.rows.min.x).min(496.0);
         list.buttons(
             Vec2::new(16.0, 39.0),
-            width / 3.0,
+            (layout.size.x - 32.0).clamp(0.0, 496.0) / 3.0,
             &[
                 ("New level", Action::New),
                 ("Open", Action::Open),
@@ -98,7 +118,13 @@ impl Actions {
         } else {
             vec![("Add root", Action::Add)]
         };
-        list.buttons(Vec2::new(16.0, 104.0), width / 4.0, &tools);
+        let width = layout.rows.max.x - layout.rows.min.x;
+        let button_width = if state.moving.is_some() {
+            (width / 2.0).min(124.0)
+        } else {
+            (width / 4.0).min(124.0)
+        };
+        list.buttons(Vec2::new(16.0, 104.0), button_width, &tools);
         let rows = state.document.hierarchy();
         let first = state
             .offset
@@ -189,11 +215,12 @@ impl View {
     pub fn draw(
         &mut self,
         state: &Hierarchy<'_>,
+        layout: &Layout,
         viewport: Viewport,
         resources: &mut ResourceTable,
         canvas: &mut Canvas,
+        preview_error: Option<&str>,
     ) -> Result<(), Box<dyn Error>> {
-        let layout = Layout::new(viewport.logical_size());
         let mut text = Labels {
             fonts: &self.fonts,
             glyphs: self.atlas.begin_frame(resources)?,
@@ -211,22 +238,49 @@ impl View {
         };
         text.line(
             &format!("{path}{unsaved}"),
-            rect(16.0, 12.0, layout.rows.max.x - 16.0, 23.0),
+            rect(16.0, 12.0, layout.size.x - 32.0, 23.0),
             TEXT,
         )?;
         text.line("Hierarchy", rect(16.0, 80.0, 150.0, 22.0), TEXT)?;
         if state.moving.is_some() {
             text.line(
-                "Choose the new parent in the hierarchy",
-                rect(270.0, 109.0, layout.size.x - 286.0, 20.0),
+                "Choose a new parent",
+                rect(102.0, 80.0, layout.rows.max.x - 102.0, 22.0),
                 MUTED,
             )?;
+        }
+        let scene_width = layout.scene.max.x - layout.scene.min.x;
+        if layout.scene.min.cmplt(layout.scene.max).all() {
+            text.line(
+                "Viewport",
+                rect(
+                    layout.scene.min.x,
+                    layout.scene.min.y - 25.0,
+                    scene_width,
+                    22.0,
+                ),
+                TEXT,
+            )?;
+            if let Some((message, color)) = preview_error
+                .map(|error| (error, ERROR))
+                .or_else(|| (state.document.len() == 0).then_some(("No scene objects", MUTED)))
+            {
+                text.fill(layout.scene, PANEL);
+                text.line(
+                    message,
+                    Rect {
+                        min: layout.scene.min + Vec2::splat(12.0),
+                        ..layout.scene
+                    },
+                    color,
+                )?;
+            }
         }
         text.fill(layout.rows, PANEL);
         if layout.visible_rows() != 0 && state.document.len() == 0 {
             text.line(
                 "Add a root node to start the level",
-                rect(29.0, 157.0, layout.size.x - 59.0, 23.0),
+                rect(29.0, 157.0, layout.rows.max.x - 42.0, 23.0),
                 MUTED,
             )?;
         }
@@ -283,7 +337,7 @@ impl View {
                 ERROR,
             )?;
         }
-        for item in Actions::new(state, &layout).0 {
+        for item in Actions::new(state, layout).0 {
             text.fill(item.bounds, item.color);
             text.line(
                 &item.label,

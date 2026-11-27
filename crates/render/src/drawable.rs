@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
-use crate::canvas::{Canvas, CanvasRenderer, Viewport};
+use crate::canvas::{Canvas, CanvasRenderer, Rect, Viewport};
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
 use crate::profile::gpu::GpuProfiler;
 use crate::profile::{GpuSample, Graphics as CaptureGraphics, PassProfile, RenderSample, Span};
@@ -77,6 +77,12 @@ pub struct Drawable {
     gpu_profiler: Option<GpuProfiler>,
     immediate: bool,
     last_present: Option<Instant>,
+}
+
+struct SceneFrame<'a> {
+    meshes: &'a MeshRegistry,
+    scene: &'a Scene,
+    bounds: Option<Rect>,
 }
 
 impl Drawable {
@@ -377,7 +383,15 @@ impl Drawable {
         meshes: &MeshRegistry,
         scene: &Scene,
     ) -> Result<DrawOutcome, RenderError> {
-        self.present(clear, Some((meshes, scene)), None)
+        self.present(
+            clear,
+            Some(SceneFrame {
+                meshes,
+                scene,
+                bounds: None,
+            }),
+            None,
+        )
     }
 
     /// Composites an ordered screen-space canvas over the scene in the same frame.
@@ -388,13 +402,42 @@ impl Drawable {
         scene: &Scene,
         canvas: &Canvas,
     ) -> Result<DrawOutcome, RenderError> {
-        self.present(clear, Some((meshes, scene)), Some(canvas))
+        self.present(
+            clear,
+            Some(SceneFrame {
+                meshes,
+                scene,
+                bounds: None,
+            }),
+            Some(canvas),
+        )
+    }
+
+    /// Renders the scene in a logical subregion and composites the full-window canvas.
+    /// The clear color fills the drawable. An empty region draws just the canvas.
+    pub fn draw_scene_in_region(
+        &mut self,
+        clear: [f64; 4],
+        meshes: &MeshRegistry,
+        scene: &Scene,
+        bounds: Rect,
+        canvas: &Canvas,
+    ) -> Result<DrawOutcome, RenderError> {
+        self.present(
+            clear,
+            Some(SceneFrame {
+                meshes,
+                scene,
+                bounds: Some(bounds),
+            }),
+            Some(canvas),
+        )
     }
 
     fn present(
         &mut self,
         clear: [f64; 4],
-        scene: Option<(&MeshRegistry, &Scene)>,
+        scene: Option<SceneFrame<'_>>,
         canvas: Option<&Canvas>,
     ) -> Result<DrawOutcome, RenderError> {
         let mut capture = self.capture.take();
@@ -411,7 +454,7 @@ impl Drawable {
     fn present_inner(
         &mut self,
         [r, g, b, a]: [f64; 4],
-        scene: Option<(&MeshRegistry, &Scene)>,
+        scene: Option<SceneFrame<'_>>,
         canvas: Option<&Canvas>,
         mut profile: Option<&mut RenderSample>,
     ) -> Result<DrawOutcome, RenderError> {
@@ -465,10 +508,24 @@ impl Drawable {
         };
 
         let start = profile.as_ref().map(|_| Instant::now());
-        if let Some((meshes, scene)) = scene {
-            let size = [frame.texture.width(), frame.texture.height()];
-            self.scene
-                .prepare(&mut self.resources, meshes, scene, size)?;
+        let size = [frame.texture.width(), frame.texture.height()];
+        let scene = scene.and_then(|scene| {
+            let region = match scene.bounds {
+                Some(bounds) => Some(
+                    Viewport::new(size, self.source.scale_factor() as f32)?.pixel_rect(bounds)?,
+                ),
+                None => None,
+            };
+            Some((scene, region))
+        });
+        if let Some((scene, region)) = &scene {
+            self.scene.prepare(
+                &mut self.resources,
+                scene.meshes,
+                scene.scene,
+                size,
+                *region,
+            )?;
         }
         let canvas_ready = if let Some(canvas) = canvas {
             let viewport = self.canvas_viewport()?;
@@ -510,10 +567,10 @@ impl Drawable {
             sample: profile.as_deref_mut(),
             queries,
         };
-        if let Some((_, scene)) = scene {
+        if let Some((scene, _)) = scene {
             self.scene.encode(
                 &self.resources,
-                scene,
+                scene.scene,
                 &mut encoder,
                 &view,
                 format,

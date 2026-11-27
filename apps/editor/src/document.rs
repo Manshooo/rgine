@@ -7,10 +7,11 @@ use std::{
 use engine_core::{Reflect, TypeRegistry};
 use engine_scene::{ObjectId, SceneTypeName, Truth, TruthError};
 
+#[allow(dead_code)]
 #[derive(Reflect)]
 struct LevelNode {
-    #[allow(dead_code)]
     name: String,
+    position: [f32; 3],
 }
 
 pub fn registry() -> TypeRegistry {
@@ -30,6 +31,7 @@ pub struct Document<'registry> {
     truth: Truth<'registry>,
     path: Option<PathBuf>,
     saved_at: usize,
+    revision: u64,
     pub selected: Option<ObjectId>,
 }
 
@@ -39,12 +41,24 @@ impl<'registry> Document<'registry> {
             truth: Truth::new(registry),
             path: None,
             saved_at: 0,
+            revision: 0,
             selected: None,
         }
     }
 
     pub fn reset(&mut self) {
-        *self = Self::new(self.truth.registry());
+        *self = Self {
+            revision: self.revision + 1,
+            ..Self::new(self.truth.registry())
+        };
+    }
+
+    pub fn truth(&self) -> &Truth<'registry> {
+        &self.truth
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -77,6 +91,7 @@ impl<'registry> Document<'registry> {
         self.truth = truth;
         self.path = Some(path);
         self.saved_at = 0;
+        self.revision += 1;
         Ok(())
     }
 
@@ -110,6 +125,7 @@ impl<'registry> Document<'registry> {
         let id = ObjectId::new_v4();
         self.truth.create::<LevelNode>(id, self.selected)?;
         self.selected = Some(id);
+        self.revision += 1;
         Ok(())
     }
 
@@ -128,16 +144,21 @@ impl<'registry> Document<'registry> {
         }
         self.truth
             .set_property(id, "name", &name.to_owned())
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        self.revision += 1;
+        Ok(())
     }
 
     pub fn reparent(&mut self, id: ObjectId, parent: Option<ObjectId>) -> Result<(), TruthError> {
-        self.truth.reparent(id, parent)
+        self.truth.reparent(id, parent)?;
+        self.revision += 1;
+        Ok(())
     }
 
     pub fn delete(&mut self, id: ObjectId) -> Result<(), TruthError> {
         let parent = self.truth.object(id).and_then(|node| node.parent());
         self.truth.delete(id)?;
+        self.revision += 1;
         if self
             .selected
             .is_some_and(|id| self.truth.object(id).is_none())

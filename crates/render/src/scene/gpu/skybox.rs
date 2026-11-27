@@ -70,7 +70,7 @@ impl Skybox {
         encoder: &mut wgpu::CommandEncoder,
         pipeline: &wgpu::RenderPipeline,
         output: &wgpu::TextureView,
-        clear: wgpu::Color,
+        (clear, region): (wgpu::Color, Option<[u32; 4]>),
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) -> Result<(), RenderError> {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -87,6 +87,7 @@ impl Skybox {
             })],
             ..Default::default()
         });
+        super::set_region(&mut pass, region);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, table.gpu_uniform_group(self.group)?, &[]);
         pass.draw(0..3, 0..1);
