@@ -3,6 +3,8 @@ use std::time::Instant;
 
 use engine_ecs::World;
 use engine_platform::{Commands, PlatformError, SurfaceSource, WindowEvent, WindowId};
+use engine_render::canvas::{Canvas, Viewport};
+use engine_render::resources::{ResourceError, ResourceTable};
 use engine_render::scene::{MeshRegistry, Scene};
 use engine_render::{DrawOutcome, Drawable};
 
@@ -63,10 +65,19 @@ struct SceneFrames {
     skybox_enabled: bool,
 }
 
+pub(crate) type CanvasDraw =
+    dyn FnMut(&World, Viewport, &mut ResourceTable, &mut Canvas) -> Result<(), ResourceError>;
+
+struct CanvasFrames {
+    draw: Box<CanvasDraw>,
+    list: Canvas,
+}
+
 pub(crate) struct Frames {
     surface: Option<Surface>,
     color: [f64; 4],
     scene: Option<SceneFrames>,
+    canvas: Option<CanvasFrames>,
     size: [u32; 2],
     occluded: bool,
     benchmark: Option<Benchmark>,
@@ -80,6 +91,7 @@ impl Frames {
             surface: None,
             color,
             scene: None,
+            canvas: None,
             size: [0, 0],
             occluded: false,
             benchmark: None,
@@ -162,6 +174,15 @@ impl Frames {
         self.scene.as_ref().is_some_and(|scene| scene.interpolating)
     }
 
+    pub(crate) fn set_canvas(&mut self, draw: Box<CanvasDraw>) {
+        if self.scene.is_some() && !self.is_benchmark() {
+            self.canvas = Some(CanvasFrames {
+                draw,
+                list: Canvas::default(),
+            });
+        }
+    }
+
     pub(crate) fn extract_for_redraw(&mut self, world: &World, alpha: f32) -> bool {
         let Some(scene) = &mut self.scene else {
             return false;
@@ -171,7 +192,9 @@ impl Frames {
         if changed {
             std::mem::swap(&mut scene.snapshot, &mut scene.scratch);
         }
-        (changed || scene.interpolating) && !self.occluded && !self.size.contains(&0)
+        (changed || scene.interpolating || self.canvas.is_some())
+            && !self.occluded
+            && !self.size.contains(&0)
     }
 
     pub(crate) fn refresh_scene(
@@ -223,6 +246,9 @@ impl Frames {
                 }
             }
             WindowEvent::RedrawRequested => return true,
+            WindowEvent::ScaleFactorChanged if !self.size.contains(&0) => {
+                commands.request_redraw(&[window]);
+            }
             _ => {}
         }
         false
@@ -230,6 +256,7 @@ impl Frames {
 
     pub(crate) fn draw(
         &mut self,
+        world: &World,
         windows: &[WindowId],
         commands: &mut Commands,
     ) -> Result<(), RenderError> {
@@ -286,9 +313,23 @@ impl Frames {
                 } else {
                     false
                 };
-            let outcome = match &self.scene {
-                Some(scene) => drawable.draw_scene(self.color, &scene.meshes, &scene.snapshot),
-                None => drawable.draw(self.color),
+            let outcome = match (&self.scene, &mut self.canvas) {
+                (Some(scene), Some(canvas)) => {
+                    canvas.list.clear();
+                    let viewport = drawable.canvas_viewport().map_err(RenderError::Graphics)?;
+                    (canvas.draw)(world, viewport, drawable.resources(), &mut canvas.list)
+                        .map_err(|error| RenderError::Graphics(error.into()))?;
+                    drawable.draw_scene_with_canvas(
+                        self.color,
+                        &scene.meshes,
+                        &scene.snapshot,
+                        &canvas.list,
+                    )
+                }
+                (Some(scene), None) => {
+                    drawable.draw_scene(self.color, &scene.meshes, &scene.snapshot)
+                }
+                (None, _) => drawable.draw(self.color),
             }
             .map_err(RenderError::Graphics)?;
             if let Some(benchmark) = &mut self.benchmark {

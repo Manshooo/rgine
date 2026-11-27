@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) trait SurfaceHandles: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn pre_present_notify(&self);
+    fn scale_factor(&self) -> f64;
 }
 
 /// Owned native handle source for a renderer's surface.
@@ -33,6 +34,11 @@ impl SurfaceSource {
     /// Notifies the platform just before a frame is presented.
     pub fn pre_present_notify(&self) {
         self.0.pre_present_notify();
+    }
+
+    /// Returns the current physical pixels per logical unit for this window.
+    pub fn scale_factor(&self) -> f64 {
+        self.0.scale_factor()
     }
 }
 

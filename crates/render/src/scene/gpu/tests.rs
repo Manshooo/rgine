@@ -5,6 +5,7 @@ use std::time::Duration;
 use engine_core::glam::{Mat4, Vec3};
 
 use super::*;
+use crate::canvas::{Affine2, Canvas, CanvasRenderer, Rect, Vec2, Viewport};
 use crate::resources::ResourceError;
 use crate::scene::SceneCamera;
 use crate::shaders::SHADER_VARIANTS;
@@ -680,7 +681,11 @@ fn center_pixel(
 }
 
 fn pixel(image: &[u8], x: u32, y: u32) -> [u8; 4] {
-    let offset = ((y * SIDE + x) * 4) as usize;
+    pixel_at_width(image, SIDE, x, y)
+}
+
+fn pixel_at_width(image: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let offset = ((y * width + x) * 4) as usize;
     image[offset..offset + 4].try_into().unwrap()
 }
 
@@ -690,16 +695,27 @@ fn scene_pixels(
     meshes: &MeshRegistry,
     scene: &Scene,
 ) -> Vec<u8> {
-    const ROW: u32 = SIDE * 4;
+    scene_pixels_at_size(renderer, table, meshes, scene, [SIDE, SIDE], None).0
+}
+
+fn scene_pixels_at_size(
+    renderer: &mut SceneRenderer,
+    table: &mut ResourceTable,
+    meshes: &MeshRegistry,
+    scene: &Scene,
+    [width, height]: [u32; 2],
+    overlay: Option<(&mut CanvasRenderer, &Canvas, Viewport)>,
+) -> (Vec<u8>, usize) {
+    let row = width * 4;
     let format = wgpu::TextureFormat::Rgba8Unorm;
     renderer.prepare_pipelines(table, format).unwrap();
     let prepared = renderer.pipeline_creations();
     renderer
-        .prepare(table, meshes, scene, [SIDE, SIDE])
+        .prepare(table, meshes, scene, [width, height])
         .unwrap();
     let size = wgpu::Extent3d {
-        width: SIDE,
-        height: SIDE,
+        width,
+        height,
         depth_or_array_layers: 1,
     };
     let color = table.device.create_texture(&wgpu::TextureDescriptor {
@@ -714,21 +730,27 @@ fn scene_pixels(
     });
     let buffer = table.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: u64::from(ROW * SIDE),
+        size: u64::from(row * height),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let mut encoder = table.device.create_command_encoder(&Default::default());
+    let view = color.create_view(&Default::default());
     renderer
         .encode(
             table,
             scene,
             &mut encoder,
-            &color.create_view(&Default::default()),
+            &view,
             format,
             wgpu::Color::BLACK,
         )
         .unwrap();
+    let draws = overlay.map_or(0, |(renderer, canvas, viewport)| {
+        renderer
+            .encode(table, canvas, viewport, &mut encoder, &view, format)
+            .unwrap()
+    });
     assert_eq!(renderer.pipeline_creations() - prepared, 0);
     encoder.copy_texture_to_buffer(
         color.as_image_copy(),
@@ -736,7 +758,7 @@ fn scene_pixels(
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(ROW),
+                bytes_per_row: Some(row),
                 rows_per_image: None,
             },
         },
@@ -753,5 +775,133 @@ fn scene_pixels(
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
     recv.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
-    slice.get_mapped_range().unwrap().to_vec()
+    (slice.get_mapped_range().unwrap().to_vec(), draws)
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter for offscreen canvas pixels"]
+fn canvas_batches_preserve_order_clipping_and_scale_over_a_3d_scene() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let mut table = ResourceTable::request(&adapter, true).unwrap();
+    let mut meshes = MeshRegistry::default();
+    let cube = meshes.insert(Mesh::cube());
+    let scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: vec![SceneObject {
+            mesh: cube,
+            transform: Mat4::from_translation(Vec3::NEG_Z * 3.0),
+            color: [0.0, 1.0, 0.0, 1.0],
+        }],
+    };
+    let a = canvas_image(&mut table, &[255, 255, 0, 255, 0, 255, 255, 255]);
+    let b = canvas_image(&mut table, &[255, 0, 255, 255]);
+    let rect = |x, y, w, h| Rect::from_min_size(Vec2::new(x, y), Vec2::new(w, h));
+    let identity = Affine2::IDENTITY;
+    let uv = rect(0.0, 0.0, 1.0, 1.0);
+    let white = [1.0; 4];
+    let mut canvas = Canvas::default();
+    for _ in 0..200 {
+        canvas.solid_quad(rect(1.0, 1.0, 2.0, 2.0), identity, white);
+    }
+    canvas.solid_quad(rect(16.0, 14.0, 32.0, 30.0), identity, [1.0, 0.0, 0.0, 0.5]);
+    canvas.solid_quad(rect(26.0, 20.0, 20.0, 17.0), identity, [0.0, 0.0, 1.0, 0.5]);
+    let rotated =
+        Affine2::from_angle_translation(std::f32::consts::FRAC_PI_2, Vec2::new(21.0, 4.0));
+    canvas.textured_quad(rect(0.0, 0.0, 10.0, 6.0), uv, rotated, white, a);
+    let overlap = rect(56.0, 20.0, 7.0, 6.0);
+    canvas.textured_quad(overlap, uv, identity, white, a);
+    canvas.textured_quad(overlap, uv, identity, white, b);
+    canvas.textured_quad(
+        rect(58.0, 20.0, 4.0, 6.0),
+        rect(0.0, 0.0, 0.49, 1.0),
+        identity,
+        [1.0, 1.0, 1.0, 0.5],
+        a,
+    );
+    canvas.push_clip(rect(42.0, 4.0, 12.0, 12.0));
+    canvas.push_clip(rect(47.0, 1.0, 12.0, 12.0));
+    canvas.solid_quad(rect(40.0, 0.0, 20.0, 20.0), identity, [0.0, 1.0, 0.0, 1.0]);
+    assert!(canvas.pop_clip());
+    assert!(canvas.pop_clip());
+    canvas.line(
+        Vec2::new(2.0, 44.0),
+        Vec2::new(12.0, 44.0),
+        2.0,
+        identity,
+        white,
+    );
+
+    let mut scene_renderer = SceneRenderer::default();
+    let mut canvas_renderer = CanvasRenderer::default();
+    for (size, scale) in [([64, 64], 1), ([128, 96], 2)] {
+        let viewport = Viewport::new(size, scale as f32).unwrap();
+        assert_eq!(
+            viewport.logical_size(),
+            Vec2::new(64.0, (size[1] / scale) as f32)
+        );
+        let (base, _) =
+            scene_pixels_at_size(&mut scene_renderer, &mut table, &meshes, &scene, size, None);
+        let (image, draws) = scene_pixels_at_size(
+            &mut scene_renderer,
+            &mut table,
+            &meshes,
+            &scene,
+            size,
+            Some((&mut canvas_renderer, &canvas, viewport)),
+        );
+        assert_eq!(draws, 6);
+        let sample = |pixels: &[u8], x, y| pixel_at_width(pixels, size[0], x * scale, y * scale);
+        let centre_y = size[1] / scale / 2;
+        let under = sample(&base, 32, centre_y);
+        assert!(under[1] > 32, "3D cube pixel {under:?}");
+        let composed = sample(&image, 32, centre_y);
+        for (actual, expected) in composed.into_iter().zip([64, under[1] / 4, 128, 255]) {
+            assert!(
+                actual.abs_diff(expected) <= 2,
+                "ordered alpha composite {composed:?}"
+            );
+        }
+        assert_eq!(sample(&image, 18, 6), [255, 255, 0, 255]);
+        assert_eq!(sample(&image, 18, 11), [0, 255, 255, 255]);
+        assert_eq!(sample(&image, 57, 23), [255, 0, 255, 255]);
+        let texture_mix = sample(&image, 59, 23);
+        for (actual, expected) in texture_mix.into_iter().zip([255, 128, 128, 255]) {
+            assert!(
+                actual.abs_diff(expected) <= 1,
+                "texture order {texture_mix:?}"
+            );
+        }
+        assert_eq!(sample(&image, 47, 6), [0, 255, 0, 255]);
+        for (x, y) in [(46, 6), (54, 6), (48, 3), (48, 13), (7, 42)] {
+            assert_eq!(
+                sample(&image, x, y),
+                sample(&base, x, y),
+                "outside at {x},{y}"
+            );
+        }
+        assert_eq!(sample(&image, 7, 44), [255; 4]);
+    }
+}
+
+fn canvas_image(table: &mut ResourceTable, texels: &[u8]) -> SampledGroupHandle {
+    let texture = table
+        .create_texture(TextureDescriptor::sampled_rgba8([
+            (texels.len() / 4) as u32,
+            1,
+        ]))
+        .unwrap();
+    table.write_texture(texture, 0, 0, texels).unwrap();
+    let sampler = table
+        .create_sampler(SamplerDescriptor::NEAREST_CLAMP)
+        .unwrap();
+    table
+        .create_sampled_group(SampledBinding { texture, sampler })
+        .unwrap()
 }

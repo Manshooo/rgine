@@ -44,6 +44,8 @@ pub enum WindowEvent {
         /// New height in physical pixels.
         height: u32,
     },
+    /// The display scale changed. Query the window's surface source for the factor.
+    ScaleFactorChanged,
     /// The window content should be redrawn.
     RedrawRequested,
     /// The window is gone and its handle is now stale.

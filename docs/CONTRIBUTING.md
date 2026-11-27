@@ -213,6 +213,16 @@ The command validates the manifest and authored scene and prefab files before wr
 
 Run the command against a migrated project to verify that it is up to date. This returns success without creating a copy. See [ADR 0021](adr/0021-authored-scene-migration.md) for the supported scene versions.
 
+## Draw a screen-space canvas
+
+```sh
+cargo run --locked -p engine-app --example canvas_overlay
+```
+
+Resize the window to see the canvas stay centered over the 3D cube. The example builds translucent panels, a rotated texture and lines clipped by two intersecting rectangles. `RUST_LOG=engine_render::drawable=debug` reports `canvas_draw_calls` for presented frames. [ADR 0030](adr/0030-screen-space-canvas.md) defines the coordinates, blending and batching.
+
+Run the native pixel fixture with `cargo test --locked -p engine-render canvas_batches_preserve_order_clipping_and_scale_over_a_3d_scene -- --ignored`. On Windows, set `WGPU_BACKEND` to `dx12` to select Direct3D 12 for the offscreen test.
+
 ## Try Deflection Arena
 
 ```sh

@@ -115,7 +115,8 @@ pub struct TextureDescriptor {
 }
 
 impl TextureDescriptor {
-    pub(crate) fn sampled_rgba8(size: [u32; 2]) -> Self {
+    /// A filterable linear RGBA8 texture with one mip level and one layer.
+    pub fn sampled_rgba8(size: [u32; 2]) -> Self {
         Self {
             size,
             mip_levels: 1,
@@ -210,7 +211,8 @@ pub struct SamplerDescriptor {
 }
 
 impl SamplerDescriptor {
-    pub(crate) const NEAREST_CLAMP: Self = Self {
+    /// Nearest-neighbor filtering with clamp-to-edge addressing.
+    pub const NEAREST_CLAMP: Self = Self {
         kind: SamplerKind::Filtering,
         filter: SamplerFilter::Nearest,
         address_mode: SamplerAddressMode::ClampToEdge,

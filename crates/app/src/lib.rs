@@ -10,6 +10,7 @@ pub use engine_core as core;
 pub use engine_ecs as ecs;
 pub use engine_ecs::Resources;
 pub use engine_platform as platform;
+pub use engine_render::{canvas, resources as render_resources};
 pub use frames::BenchmarkReport;
 pub use frames::RenderError;
 pub use input_actions::{ActionBinding, ActionEvent, ActionState, InputActions, InputContext};
@@ -48,6 +49,7 @@ pub struct App {
     directional_light: scene::DirectionalLight,
     hemisphere_light: scene::HemisphereLight,
     skybox_enabled: bool,
+    canvas: Option<Box<frames::CanvasDraw>>,
     #[cfg(feature = "hot-reload")]
     shader_directory: Option<std::path::PathBuf>,
 }
@@ -63,6 +65,7 @@ impl Default for App {
             directional_light: scene::DirectionalLight::default(),
             hemisphere_light: scene::HemisphereLight::default(),
             skybox_enabled: false,
+            canvas: None,
             #[cfg(feature = "hot-reload")]
             shader_directory: None,
         }
@@ -150,6 +153,24 @@ impl App {
         self
     }
 
+    /// Builds a screen-space overlay immediately before drawing a scene frame.
+    /// The draw list is cleared first. The viewport supplies logical bounds
+    /// and display scale. Recreate cached texture handles when the resource
+    /// table changes after native surface invalidation.
+    pub fn with_canvas(
+        mut self,
+        draw: impl FnMut(
+            &World,
+            canvas::Viewport,
+            &mut render_resources::ResourceTable,
+            &mut canvas::Canvas,
+        ) -> Result<(), render_resources::ResourceError>
+        + 'static,
+    ) -> Self {
+        self.canvas = Some(Box::new(draw));
+        self
+    }
+
     /// Watches the WGSL files in a development shader directory.
     #[cfg(feature = "hot-reload")]
     pub fn with_scene_shader_directory(mut self, directory: std::path::PathBuf) -> Self {
@@ -224,10 +245,13 @@ impl App {
     }
 
     fn run_with_frames(
-        self,
-        frames: Frames,
+        mut self,
+        mut frames: Frames,
         refresh: Option<Box<SceneRefresh<'_>>>,
     ) -> Result<Frames, RenderError> {
+        if let Some(draw) = self.canvas.take() {
+            frames.set_canvas(draw);
+        }
         let mut runner = Runner::new(self);
         runner.frames = Some(frames);
         runner.refresh = refresh;
@@ -342,7 +366,7 @@ impl Runner<'_> {
         #[cfg(feature = "hot-reload")]
         let changed = frames.poll_scene_shaders() || changed;
         if redraw || frames.benchmark_interrupted() {
-            if let Err(error) = frames.draw(&self.open, commands) {
+            if let Err(error) = frames.draw(self.simulation.world(), &self.open, commands) {
                 if self.render_failure.is_none() {
                     self.render_failure = Some(error);
                 }
@@ -515,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn rendered_window_requests_redraw_on_open_and_restore() {
+    fn rendered_window_requests_redraw_on_open_restore_and_scale_change() {
         let mut runner = runner();
         runner.frames = Some(Frames::new([0.0, 0.0, 0.0, 1.0]));
         let mut commands = Commands::default();
@@ -547,6 +571,12 @@ mod tests {
                     height: 480,
                 },
             )],
+            &mut commands,
+        );
+        assert_eq!(commands.drain(), vec![Command::RequestRedraw(window)]);
+
+        runner.update(
+            &[window_event(window, WindowEvent::ScaleFactorChanged)],
             &mut commands,
         );
         assert_eq!(commands.drain(), vec![Command::RequestRedraw(window)]);

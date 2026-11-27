@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
+use crate::canvas::{Canvas, CanvasRenderer, Viewport};
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
 use crate::resources::{BindingMode, ResourceError, ResourceTable};
 use crate::scene::{
@@ -65,6 +66,7 @@ pub struct Drawable {
     resources: ResourceTable,
     frame_graph: CompiledGraph<()>,
     scene: SceneRenderer,
+    canvas: CanvasRenderer,
     size: [u32; 2],
     surface_format: Option<wgpu::TextureFormat>,
     immediate: bool,
@@ -116,6 +118,7 @@ impl Drawable {
             resources,
             frame_graph,
             scene: SceneRenderer::default(),
+            canvas: CanvasRenderer::default(),
             size,
             surface_format: None,
             immediate,
@@ -126,6 +129,13 @@ impl Drawable {
     /// Accesses this device's resource table before preparing the next frame.
     pub fn resources(&mut self) -> &mut ResourceTable {
         &mut self.resources
+    }
+
+    /// Returns the current drawable extent and native display scale for canvas layout.
+    pub fn canvas_viewport(&self) -> Result<Viewport, RenderError> {
+        Viewport::new(self.size, self.source.scale_factor() as f32).ok_or_else(|| {
+            RenderError("drawable size or display scale is invalid for canvas layout".into())
+        })
     }
 
     /// Sets the direct light for subsequent scene draws.
@@ -271,7 +281,7 @@ impl Drawable {
 
     /// Clears the drawable to the given linear RGBA color and presents it.
     pub fn draw(&mut self, clear: [f64; 4]) -> Result<DrawOutcome, RenderError> {
-        self.present(clear, None)
+        self.present(clear, None, None)
     }
 
     /// Draws the extracted scene with the current device and drawable size.
@@ -281,13 +291,25 @@ impl Drawable {
         meshes: &MeshRegistry,
         scene: &Scene,
     ) -> Result<DrawOutcome, RenderError> {
-        self.present(clear, Some((meshes, scene)))
+        self.present(clear, Some((meshes, scene)), None)
+    }
+
+    /// Composites an ordered screen-space canvas over the scene in the same frame.
+    pub fn draw_scene_with_canvas(
+        &mut self,
+        clear: [f64; 4],
+        meshes: &MeshRegistry,
+        scene: &Scene,
+        canvas: &Canvas,
+    ) -> Result<DrawOutcome, RenderError> {
+        self.present(clear, Some((meshes, scene)), Some(canvas))
     }
 
     fn present(
         &mut self,
         [r, g, b, a]: [f64; 4],
         scene: Option<(&MeshRegistry, &Scene)>,
+        canvas: Option<&Canvas>,
     ) -> Result<DrawOutcome, RenderError> {
         if self.size.contains(&0) {
             return Ok(DrawOutcome::Idle);
@@ -337,6 +359,19 @@ impl Drawable {
         } else {
             self.encode_frame(&mut encoder, &view, color)?;
         }
+        let canvas_draw_calls = if let Some(canvas) = canvas {
+            let viewport = self.canvas_viewport()?;
+            self.canvas.encode(
+                &mut self.resources,
+                canvas,
+                viewport,
+                &mut encoder,
+                &view,
+                format,
+            )?
+        } else {
+            0
+        };
         self.resources.queue.submit([encoder.finish()]);
         self.source.pre_present_notify();
         self.resources.queue.present(frame);
@@ -353,6 +388,7 @@ impl Drawable {
             width = self.size[0],
             height = self.size[1],
             pipeline_creations = self.scene_pipeline_creations() - pipelines_before,
+            canvas_draw_calls,
             "presented frame"
         );
         Ok(DrawOutcome::Presented)

@@ -181,6 +181,7 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
                 width: size.width,
                 height: size.height,
             },
+            BackendWindowEvent::ScaleFactorChanged { .. } => WindowEvent::ScaleFactorChanged,
             BackendWindowEvent::Destroyed => {
                 self.app.surface_event(SurfaceEvent::Invalidating(window));
                 self.handles.remove(&window_id);
@@ -222,5 +223,9 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
 impl SurfaceHandles for Window {
     fn pre_present_notify(&self) {
         Window::pre_present_notify(self);
+    }
+
+    fn scale_factor(&self) -> f64 {
+        Window::scale_factor(self)
     }
 }
