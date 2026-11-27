@@ -4,6 +4,7 @@
 
 mod layout;
 mod style;
+pub mod text;
 
 pub use layout::{LayoutError, Widget, WidgetKind, WidgetTree};
 pub use style::{

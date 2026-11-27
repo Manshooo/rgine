@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Game UI can load project font faces and prepare measured glyph runs with kerning, fallback and wrapping in logical pixels (ADR 0031).
 - Games and UI can batch ordered screen-space quads and lines with textures, affine transforms, nested clipping and alpha blending over the 3D scene (ADR 0030).
 - Development builds can reload validated RON gameplay settings. Deflection Arena exposes movement speed, a strike speed curve and strike transitions.
 - Scene rendering interpolates opted-in physics bodies between fixed steps and snaps to the new pose on respawn.

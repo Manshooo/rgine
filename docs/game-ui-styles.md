@@ -45,3 +45,19 @@ A game supplies the flags for `:hover`, `:focus`, `:active` and `:disabled` to `
 A zero length can omit its unit. Decimal numbers are supported. Default layout uses automatic sizes and constraints, zero spacing, horizontal flow, cross-axis stretch, main-axis start alignment and a transparent background. Typography including `color` inherits. The root defaults to the project's default fonts at 16 logical pixels, weight 400, metrics-based line height, left alignment and white text. An inherited unitless line height multiplies the receiving widget's font size.
 
 The parser accepts CSS block comments. Unsupported syntax, properties and values produce an error with the stylesheet name, line and column. A caller can retain its previous stylesheet when a replacement fails to parse.
+
+## Measure label and button text
+
+Register the project's font assets and pass the resolved widget typography to `FontBook::prepare`.
+
+```rust
+use engine_ui::text::FontBook;
+
+let mut fonts = FontBook::default();
+fonts.load_face("assets/fonts/ui.ttf", 0, "Project UI", 400)?;
+fonts.load_face("assets/fonts/fallback.otf", 0, "Project Fallback", 400)?;
+fonts.set_default_families(["Project UI", "Project Fallback"]);
+let prepared = fonts.prepare("Score · Очки", &computed.typography, Some(120.0))?;
+```
+
+Use `prepared.size` for the text block's logical bounds and `prepared.lines` to place glyphs at draw time. Pass `None` for the intrinsic size without soft wrapping. Device scale applies to placement and rasterization. [ADR 0031](adr/0031-game-ui-text-layout.md).
