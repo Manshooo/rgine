@@ -72,6 +72,12 @@ Enable the `canvas` feature of `engine-ui` and keep a `text::canvas::GlyphAtlas`
 
 Run `cargo run --locked -p engine-app --example ui_text -- 1` or pass `2` to exercise the sample at twice that scale. Omit the argument to use the window's display scale. The HUD warms all digits on frame 0 and introduces a minus sign on frame 12. The sample reports rasterizations, atlas uploads and uploaded bytes. Set `RUST_LOG=engine_render::drawable=debug` to see the Canvas draw-call count.
 
+## Render and reload an authored overlay
+
+Resolve the stylesheet and lay out the tree using the logical Canvas viewport. Pass the result to `engine_ui::canvas::UiDrawList::prepare` and reuse the list while the UI and logical viewport size stay the same. Draw it from `App::with_canvas` using the glyph frame for that submission. Provide image dimensions to layout and return matching sampled groups when drawing.
+
+To try it, run `cargo run --locked -p engine-app --features hot-reload,ui --example ui_overlay`. Resize the window and edit the [sample layout](../crates/app/examples/fixtures/ui_overlay/hud.xml) or [stylesheet](../crates/app/examples/fixtures/ui_overlay/hud.css) while it runs. The example also accepts a directory containing `hud.xml` and `hud.css` after `--`, with an optional initial window width. A syntax error identifies the file, line and column. The current overlay stays visible until both files parse successfully. [ADR 0034](adr/0034-authored-ui-overlay.md).
+
 The fixture puts two reusable cards in a row. Each card puts its image beside a column containing a label and button. Card width is 40% of the HUD content width with a minimum of 120 and maximum of 160 logical pixels. [XML fixture](../crates/ui/tests/fixtures/geometry.xml) · [CSS fixture](../crates/ui/tests/fixtures/geometry.css).
 
 | Physical viewport | Scale | Logical viewport | Logical card origins | Logical card size | First card in physical pixels `(x, y, w, h)` |

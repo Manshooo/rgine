@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 hot-reload = ["dep:engine-scene", "dep:ron", "engine-render/shader-reload"]
 physics = ["dep:engine-physics"]
+ui = ["dep:engine-ui"]
 
 [dependencies]
 engine-asset.workspace = true
@@ -18,6 +19,7 @@ engine-physics = { workspace = true, optional = true }
 engine-platform.workspace = true
 engine-render.workspace = true
 engine-scene = { workspace = true, optional = true }
+engine-ui = { workspace = true, features = ["canvas"], optional = true }
 ron = { version = "0.10", optional = true }
 serde.workspace = true
 
@@ -34,6 +36,10 @@ crate-type = ["cdylib"]
 [[example]]
 name = "hot_reload"
 required-features = ["hot-reload"]
+
+[[example]]
+name = "ui_overlay"
+required-features = ["hot-reload", "ui"]
 
 [[example]]
 name = "deflection_arena"

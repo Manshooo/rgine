@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "canvas")]
+pub mod canvas;
 pub mod geometry;
 mod layout;
 mod style;

@@ -1,0 +1,15 @@
+<ui>
+    <panel class="hud">
+        <panel class="card score">
+            <image src="marker" />
+            <panel class="copy">
+                <label class="title" text="Score / Очки" />
+                <label text="Coins 04 / 12" />
+            </panel>
+        </panel>
+        <panel class="card menu">
+            <label class="title" text="Pause" />
+            <button text="Resume" />
+        </panel>
+    </panel>
+</ui>
