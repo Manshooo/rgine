@@ -43,10 +43,18 @@ impl Viewport {
     }
 
     fn scissor(self, clip: Option<Rect>) -> Option<[u32; 4]> {
+        match clip {
+            Some(clip) => self.pixel_rect(clip),
+            None => Some([0, 0, self.size[0], self.size[1]]),
+        }
+    }
+
+    /// Converts a logical rectangle to clipped physical `[x, y, width, height]`.
+    pub fn pixel_rect(self, clip: Rect) -> Option<[u32; 4]> {
+        if clip.is_empty() {
+            return None;
+        }
         let [width, height] = self.size;
-        let Some(clip) = clip else {
-            return Some([0, 0, width, height]);
-        };
         // Keep a pixel when its centre is inside the half-open clip rectangle.
         let edge =
             |value: f32, limit: u32| (value.mul_add(self.scale, -0.5).ceil() as u32).min(limit);

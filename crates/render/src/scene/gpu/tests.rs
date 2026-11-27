@@ -670,6 +670,51 @@ fn imported_ktx2_material_samples_mips_and_color_space() {
     }
 }
 
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn scene_subregion_clips_opaque_geometry_and_skybox_and_uses_its_own_aspect() {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let mut table = ResourceTable::request(&adapter, true, false).unwrap();
+    let mut renderer = SceneRenderer {
+        skybox_enabled: true,
+        ..Default::default()
+    };
+    let mut meshes = MeshRegistry::default();
+    let scene = Scene {
+        camera: Some(SceneCamera {
+            view: Mat4::IDENTITY,
+            vertical_fov: 1.0,
+            near: 0.1,
+            far: 20.0,
+        }),
+        objects: vec![SceneObject {
+            mesh: meshes.insert(Mesh::cube()),
+            transform: Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)),
+            color: [1.0, 0.0, 0.0, 1.0],
+        }],
+    };
+    let (image, _) = scene_pixels_at_size(
+        &mut renderer,
+        &mut table,
+        &meshes,
+        &scene,
+        [SIDE, SIDE],
+        Some([25, 8, 24, 48]),
+        None,
+    );
+    for (x, y) in [(24, 32), (49, 32), (37, 7), (37, 56)] {
+        assert_eq!(pixel(&image, x, y), [0, 0, 0, 255]);
+    }
+    assert_ne!(pixel(&image, 25, 8), [0, 0, 0, 255]);
+    let red = pixel(&image, 44, 32);
+    assert!(red[0] > 64 && red[1] == 0 && red[2] == 0, "{red:?}");
+
+    let fullscreen = scene_pixels(&mut renderer, &mut table, &meshes, &scene);
+    assert_ne!(pixel(&fullscreen, 24, 7), [0, 0, 0, 255]);
+}
+
 fn center_pixel(
     renderer: &mut SceneRenderer,
     table: &mut ResourceTable,
@@ -698,7 +743,7 @@ fn scene_pixels(
     meshes: &MeshRegistry,
     scene: &Scene,
 ) -> Vec<u8> {
-    scene_pixels_at_size(renderer, table, meshes, scene, [SIDE, SIDE], None).0
+    scene_pixels_at_size(renderer, table, meshes, scene, [SIDE, SIDE], None, None).0
 }
 
 fn scene_pixels_at_size(
@@ -707,6 +752,7 @@ fn scene_pixels_at_size(
     meshes: &MeshRegistry,
     scene: &Scene,
     [width, height]: [u32; 2],
+    region: Option<[u32; 4]>,
     overlay: Option<(&mut CanvasRenderer, &Canvas, Viewport)>,
 ) -> (Vec<u8>, usize) {
     let row = width * 4;
@@ -714,7 +760,7 @@ fn scene_pixels_at_size(
     renderer.prepare_pipelines(table, format).unwrap();
     let prepared = renderer.pipeline_creations();
     renderer
-        .prepare(table, meshes, scene, [width, height])
+        .prepare(table, meshes, scene, [width, height], region)
         .unwrap();
     let size = wgpu::Extent3d {
         width,
@@ -885,14 +931,22 @@ fn canvas_batches_preserve_order_clipping_and_scale_over_a_3d_scene() {
             viewport.logical_size(),
             Vec2::new(64.0, (size[1] / scale) as f32)
         );
-        let (base, _) =
-            scene_pixels_at_size(&mut scene_renderer, &mut table, &meshes, &scene, size, None);
+        let (base, _) = scene_pixels_at_size(
+            &mut scene_renderer,
+            &mut table,
+            &meshes,
+            &scene,
+            size,
+            None,
+            None,
+        );
         let (image, draws) = scene_pixels_at_size(
             &mut scene_renderer,
             &mut table,
             &meshes,
             &scene,
             size,
+            None,
             Some((&mut canvas_renderer, &canvas, viewport)),
         );
         assert_eq!(draws, 6);

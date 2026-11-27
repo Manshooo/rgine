@@ -9,11 +9,13 @@ use engine_render::{DrawOutcome, Drawable, canvas::Canvas};
 
 mod document;
 mod hierarchy;
+mod preview;
 mod view;
 
 use document::Document;
 use hierarchy::Hierarchy;
-use view::View;
+use preview::Preview;
+use view::{Layout, View};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -31,6 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut editor = Editor {
         hierarchy,
+        preview: Preview::new(),
         view: View::new()?,
         canvas: Canvas::default(),
         window: None,
@@ -43,6 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 struct Editor<'registry> {
     hierarchy: Hierarchy<'registry>,
+    preview: Preview,
     view: View,
     canvas: Canvas,
     window: Option<WindowId>,
@@ -58,14 +62,30 @@ impl Editor<'_> {
         let Ok(viewport) = surface.canvas_viewport() else {
             return Ok(DrawOutcome::Idle);
         };
+        let layout = Layout::new(viewport.logical_size());
+        let preview_error = self
+            .preview
+            .update(&self.hierarchy.document, viewport.pixel_rect(layout.scene));
         self.canvas.clear();
         self.view.draw(
             &self.hierarchy,
+            &layout,
             viewport,
             surface.resources(),
             &mut self.canvas,
+            preview_error,
         )?;
-        Ok(surface.draw_with_canvas([0.022, 0.029, 0.042, 1.0], &self.canvas)?)
+        let clear = [0.022, 0.029, 0.042, 1.0];
+        if self.preview.scene.camera.is_none() {
+            return Ok(surface.draw_with_canvas(clear, &self.canvas)?);
+        }
+        Ok(surface.draw_scene_in_region(
+            clear,
+            &self.preview.meshes,
+            &self.preview.scene,
+            layout.scene,
+            &self.canvas,
+        )?)
     }
 }
 
@@ -74,7 +94,10 @@ impl PlatformApp for &mut Editor<'_> {
         match event {
             SurfaceEvent::Available(window, source, size) if Some(window) == self.window => {
                 match Drawable::new(source, size) {
-                    Ok(surface) => self.surface = Some(surface),
+                    Ok(mut surface) => {
+                        surface.set_skybox_enabled(true);
+                        self.surface = Some(surface);
+                    }
                     Err(error) => self.error = Some(Box::new(error)),
                 }
             }

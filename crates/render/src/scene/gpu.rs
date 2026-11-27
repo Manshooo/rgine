@@ -214,6 +214,7 @@ pub(crate) struct SceneRenderer {
     skybox: Option<skybox::Skybox>,
     pipelines: ScenePipelines,
     target: Option<SceneTargets>,
+    region: Option<[u32; 4]>,
     registry: Option<u64>,
     meshes: HashMap<MeshKey, GpuMesh>,
     materials: HashMap<MaterialTexture, (MaterialBinding, Option<TextureHandle>)>,
@@ -260,6 +261,7 @@ impl SceneRenderer {
         meshes: &MeshRegistry,
         scene: &Scene,
         size: [u32; 2],
+        region: Option<[u32; 4]>,
     ) -> Result<(), RenderError> {
         if self.registry != Some(meshes.id) {
             for (_, mesh) in self.meshes.drain() {
@@ -292,9 +294,11 @@ impl SceneRenderer {
                 shadow_layout,
             )?);
         }
+        self.region = region;
         let Some(camera) = scene.camera else {
             return Ok(());
         };
+        let size = region.map_or(size, |[_, _, width, height]| [width, height]);
         let clip = camera
             .clip_from_world(size)
             .ok_or_else(|| RenderError("invalid perspective camera or drawable size".into()))?;
@@ -418,7 +422,7 @@ impl SceneRenderer {
                             encoder,
                             &self.pipelines.entries[&ScenePipelineKey::skybox(format)],
                             output,
-                            clear,
+                            (clear, self.region),
                             timestamp_writes,
                         )?;
                         if let Some(work) = work {
@@ -459,6 +463,7 @@ impl SceneRenderer {
                 ..Default::default()
             });
             if has_draws {
+                set_region(&mut render, self.region);
                 let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
                 let key = ScenePipelineKey::new(format, table.binding_mode());
                 let pipeline = &self.pipelines.entries[&key];
@@ -533,6 +538,13 @@ impl SceneRenderer {
             }
         }
         Ok(())
+    }
+}
+
+fn set_region(pass: &mut wgpu::RenderPass<'_>, region: Option<[u32; 4]>) {
+    if let Some([x, y, width, height]) = region {
+        pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+        pass.set_scissor_rect(x, y, width, height);
     }
 }
 
