@@ -1,13 +1,28 @@
 //! Optional integration of 3D physics with the app's fixed schedule.
 
 pub use engine_physics::{
-    BodyKind, Collider, ColliderShape, ContactEvent, KinematicMotion, KinematicMove, PhysicsPose,
-    PhysicsWorld, RigidBody,
+    BodyKind, Collider, ColliderShape, ContactEvent, KinematicMotion, KinematicMove,
+    PhysicsInterpolation, PhysicsPose, PhysicsWorld, RigidBody,
 };
 
 use engine_core::glam::Vec3;
 
-use crate::{App, Plugin};
+use crate::{App, Plugin, StepContext};
+
+impl StepContext {
+    /// Steps the installed physics world and records its CPU work during frame capture.
+    pub fn step_physics(&mut self, world: &engine_ecs::World, commands: &mut engine_ecs::Commands) {
+        let start = self.profile.as_ref().map(|_| std::time::Instant::now());
+        let delta = self.delta();
+        self.resources_mut()
+            .get_mut::<PhysicsWorld>()
+            .expect("physics world installed before stepping")
+            .step(world, commands, delta);
+        if let Some((profile, start)) = self.profile.as_mut().zip(start) {
+            profile.push("physics", start);
+        }
+    }
+}
 
 /// Runs physics after the regular update stage, once per fixed step.
 ///
@@ -34,12 +49,7 @@ impl Plugin for PhysicsPlugin {
         let schedule = app.schedule_mut();
         let stage = schedule.add_stage();
         schedule.add_system(stage, |world, commands, context, _| {
-            let delta = context.delta();
-            context
-                .resources_mut()
-                .get_mut::<PhysicsWorld>()
-                .expect("physics plugin installed its world")
-                .step(world, commands, delta);
+            context.step_physics(world, commands);
         });
     }
 }

@@ -1,0 +1,127 @@
+(
+    schema_version: 2,
+    objects: {
+        "00000000-0000-0000-0000-000000000001": (
+            object_type: (name: "platformer.piece", version: 1),
+            parent: None,
+            properties: {
+                "kind": Start,
+                "position": (-4.8, 0.52, 0.0),
+                "size": (1.0, 1.0, 1.0),
+            },
+        ),
+        "00000000-0000-0000-0000-00000000000a": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000064",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (-2.7, -0.35, 0.0), "size": (6.6, 0.7, 2.8) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-00000000000b": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000064",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (4.3, 0.0, 0.0), "size": (4.8, 0.7, 2.8) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-00000000000c": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000064",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (10.6, 0.45, 0.0) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-00000000000d": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000064",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (16.1, -0.15, 0.0) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-000000000014": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000065",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (-3.2, 0.59, 0.0) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-000000000015": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000065",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (3.5, 0.94, 0.0) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-000000000016": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000065",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (10.6, 1.39, 0.0) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-000000000017": (
+            object_type: (name: "rgine.prefab_instance", version: 1),
+            parent: None,
+            properties: {
+                "placement": (
+                    asset: "00000000-0000-0000-0000-000000000065",
+                    root: "00000000-0000-0000-0000-000000000001",
+                    overrides: {
+                        "00000000-0000-0000-0000-000000000001": { "position": (16.5, 0.79, 0.0) },
+                    },
+                ),
+            },
+        ),
+        "00000000-0000-0000-0000-00000000001e": (
+            object_type: (name: "platformer.piece", version: 1),
+            parent: None,
+            properties: {
+                "kind": Checkpoint,
+                "position": (4.85, 0.89, 0.0),
+                "size": (0.5, 1.08, 0.5),
+            },
+        ),
+    },
+)

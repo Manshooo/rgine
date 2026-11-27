@@ -115,7 +115,8 @@ pub struct TextureDescriptor {
 }
 
 impl TextureDescriptor {
-    pub(crate) fn sampled_rgba8(size: [u32; 2]) -> Self {
+    /// A filterable linear RGBA8 texture with one mip level and one layer.
+    pub fn sampled_rgba8(size: [u32; 2]) -> Self {
         Self {
             size,
             mip_levels: 1,
@@ -210,7 +211,8 @@ pub struct SamplerDescriptor {
 }
 
 impl SamplerDescriptor {
-    pub(crate) const NEAREST_CLAMP: Self = Self {
+    /// Nearest-neighbor filtering with clamp-to-edge addressing.
+    pub const NEAREST_CLAMP: Self = Self {
         kind: SamplerKind::Filtering,
         filter: SamplerFilter::Nearest,
         address_mode: SamplerAddressMode::ClampToEdge,
@@ -259,6 +261,11 @@ pub(super) struct SampledResources {
 }
 
 impl ResourceTable {
+    /// Maximum width or height in texels for a sampled 2D texture on this device.
+    pub fn max_sampled_texture_side(&self) -> u32 {
+        self.limits.max_texture_dimension_2d
+    }
+
     /// Allocates a texture and its declared view.
     pub fn create_texture(
         &mut self,
@@ -289,16 +296,48 @@ impl ResourceTable {
         array_layer: u32,
         data: &[u8],
     ) -> Result<(), ResourceError> {
+        self.upload_texture(handle, mip_level, array_layer, None, data)
+    }
+
+    /// Queues a tightly packed rectangular upload into one mip level and layer.
+    /// The origin and size are in texels at the selected mip level. Depth
+    /// texture uploads must cover the complete mip level.
+    pub fn write_texture_region(
+        &mut self,
+        handle: TextureHandle,
+        mip_level: u32,
+        array_layer: u32,
+        origin: [u32; 2],
+        size: [u32; 2],
+        data: &[u8],
+    ) -> Result<(), ResourceError> {
+        self.upload_texture(handle, mip_level, array_layer, Some((origin, size)), data)
+    }
+
+    fn upload_texture(
+        &mut self,
+        handle: TextureHandle,
+        mip_level: u32,
+        array_layer: u32,
+        region: Option<([u32; 2], [u32; 2])>,
+        data: &[u8],
+    ) -> Result<(), ResourceError> {
         let texture = self.texture(handle)?;
-        let (size, bytes_per_row) = texture.upload_layout(mip_level, array_layer, data.len())?;
+        let (size, bytes_per_row) =
+            texture.upload_layout(mip_level, array_layer, region, data.len())?;
+        let [x, y] = region.map_or([0, 0], |(origin, _)| origin);
+        let start = self
+            .profile_uploads
+            .as_ref()
+            .map(|_| std::time::Instant::now());
         checked_gpu(&self.device, || {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture.raw,
                     mip_level,
                     origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
+                        x,
+                        y,
                         z: array_layer,
                     },
                     aspect: wgpu::TextureAspect::All,
@@ -311,7 +350,9 @@ impl ResourceTable {
                 },
                 size,
             );
-        })
+        })?;
+        self.record_upload("texture upload", start, data.len());
+        Ok(())
     }
 
     /// Replaces texture backing while preserving the view contract and live group handles.
@@ -736,6 +777,7 @@ impl Texture {
         &self,
         mip: u32,
         layer: u32,
+        region: Option<([u32; 2], [u32; 2])>,
         byte_count: usize,
     ) -> Result<(wgpu::Extent3d, u32), ResourceError> {
         if mip >= self.descriptor.mip_levels || layer >= self.descriptor.array_layers {
@@ -747,22 +789,42 @@ impl Texture {
             .raw
             .size()
             .mip_level_size(mip, wgpu::TextureDimension::D2);
+        let extent = [size.width, size.height];
+        let (origin, [width, height]) = region.unwrap_or(([0, 0], extent));
+        if width == 0
+            || height == 0
+            || !range_fits(u64::from(origin[0]), u64::from(width), u64::from(extent[0]))
+            || !range_fits(
+                u64::from(origin[1]),
+                u64::from(height),
+                u64::from(extent[1]),
+            )
+        {
+            return Err(ResourceError::InvalidRange(
+                "texture upload region must be nonempty and inside the mip level".into(),
+            ));
+        }
+        if self.descriptor.format == TextureFormat::Depth16Unorm && [width, height] != extent {
+            return Err(ResourceError::InvalidRange(
+                "depth texture uploads must cover the complete mip level".into(),
+            ));
+        }
         let bytes_per_texel = self
             .raw
             .format()
             .block_copy_size(None)
             .expect("supported texel format");
-        let bytes_per_row = size.width * bytes_per_texel;
-        if byte_count as u64 != u64::from(bytes_per_row) * u64::from(size.height) {
+        let bytes_per_row = width * bytes_per_texel;
+        if byte_count as u64 != u64::from(bytes_per_row) * u64::from(height) {
             return Err(ResourceError::InvalidRange(
-                "texture upload needs tightly packed bytes for one complete mip level and layer"
-                    .into(),
+                "texture upload needs tightly packed bytes for the specified region".into(),
             ));
         }
         Ok((
             wgpu::Extent3d {
                 depth_or_array_layers: 1,
-                ..size
+                width,
+                height,
             },
             bytes_per_row,
         ))

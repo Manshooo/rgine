@@ -16,6 +16,8 @@ pub enum ActionBinding {
     MouseButton(MouseButton),
     /// Mouse wheel or trackpad scroll.
     Scroll,
+    /// A game-defined touch target selected by hit testing a touch start.
+    TouchButton(u16),
 }
 
 /// A set of bindings the game can push onto the active context stack.
@@ -79,8 +81,15 @@ pub struct ActionState {
 
 struct Down<A> {
     window: WindowId,
+    source: ButtonSource,
     binding: ActionBinding,
     action: Option<A>,
+}
+
+#[derive(PartialEq, Eq)]
+enum ButtonSource {
+    Physical(ActionBinding),
+    Touch(u64),
 }
 
 /// Resolves ordered input through the active contexts without ECS or a window loop.
@@ -148,6 +157,11 @@ impl<A: Copy + Eq> InputActions<A> {
                     self.events.push(ActionEvent::Scroll { action, delta });
                 }
             }
+            Input::Touch {
+                id,
+                phase: TouchPhase::Ended | TouchPhase::Cancelled,
+                ..
+            } => self.release(event.window, ButtonSource::Touch(id)),
             Input::Cancelled => {
                 while let Some(index) = self
                     .down
@@ -159,6 +173,25 @@ impl<A: Copy + Eq> InputActions<A> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Routes a touch start after UI interception and game hit testing. The
+    /// same finger owns the button until its end or cancellation is routed.
+    pub fn press_touch_button(&mut self, event: &InputEvent, button: u16) {
+        if let Input::Touch {
+            id,
+            phase: TouchPhase::Started,
+            ..
+        } = event.input
+        {
+            self.reconcile_contexts();
+            self.press(
+                event.window,
+                ButtonSource::Touch(id),
+                ActionBinding::TouchButton(button),
+                false,
+            );
         }
     }
 
@@ -199,33 +232,54 @@ impl<A: Copy + Eq> InputActions<A> {
     }
 
     fn button(&mut self, window: WindowId, binding: ActionBinding, pressed: bool, consumed: bool) {
-        let index = self
+        let source = ButtonSource::Physical(binding);
+        if pressed {
+            self.press(window, source, binding, consumed);
+        } else {
+            self.release(window, source);
+        }
+    }
+
+    fn press(
+        &mut self,
+        window: WindowId,
+        source: ButtonSource,
+        binding: ActionBinding,
+        consumed: bool,
+    ) {
+        if self
             .down
             .iter()
-            .position(|down| down.window == window && down.binding == binding);
-        match (pressed, index) {
-            (true, None) => {
-                let action = if consumed {
-                    None
-                } else {
-                    self.resolve(binding)
-                };
-                if let Some(action) = action
-                    && !self.is_held(action)
-                {
-                    self.events.push(ActionEvent::Pressed(action));
-                }
-                self.down.push(Down {
-                    window,
-                    binding,
-                    action,
-                });
-            }
-            (false, Some(index)) => {
-                self.end_source(index);
-                self.down.remove(index);
-            }
-            _ => {}
+            .any(|down| down.window == window && down.source == source)
+        {
+            return;
+        }
+        let action = if consumed {
+            None
+        } else {
+            self.resolve(binding)
+        };
+        if let Some(action) = action
+            && !self.is_held(action)
+        {
+            self.events.push(ActionEvent::Pressed(action));
+        }
+        self.down.push(Down {
+            window,
+            source,
+            binding,
+            action,
+        });
+    }
+
+    fn release(&mut self, window: WindowId, source: ButtonSource) {
+        if let Some(index) = self
+            .down
+            .iter()
+            .position(|down| down.window == window && down.source == source)
+        {
+            self.end_source(index);
+            self.down.remove(index);
         }
     }
 

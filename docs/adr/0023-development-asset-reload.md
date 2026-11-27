@@ -9,6 +9,8 @@ The opt-in app feature hot-reload runs a refresh after simulation and before ren
 
 The app stages a fresh mesh registry when asset inputs change and reconciles the authored snapshot in the existing game World through the incremental scene compiler. It publishes the new mesh registry and scene together after validation. On a failed input the previous valid result stays active, and a later edit retries the affected input. The renderer releases GPU meshes and imported textures from the previous registry while retaining its device and pipelines.
 
+Games can use `RonReload` to deserialize and validate game-owned settings in the same between-frame refresh. It fingerprints the exact bytes attempted and replaces the active value only after both checks pass. Fixed-step systems see a complete settings value on their next step. Rejected edits report their source path and are retried when the file changes. Deflection Arena supplies its own movement, curve sampling and strike transitions.
+
 ## Verification
 
 The [manual Linux fixture](../CONTRIBUTING.md#reload-an-authored-prop-during-development) launches the normal app loop in Xvfb with a Vulkan software adapter. It edits an external glTF buffer and a RON placement in the same running process and observes the changed pixels. The asset budget is under two seconds from the disk write to the visible change. Invalid edits exercise the same pipeline and preserve the last visible result.

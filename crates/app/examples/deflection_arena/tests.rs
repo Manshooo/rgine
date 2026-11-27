@@ -145,3 +145,84 @@ fn modal_pause_reuses_keys_and_requires_a_fresh_gameplay_press() {
         .unwrap();
     assert_eq!(replay.snapshot(), restarted);
 }
+
+#[cfg(feature = "hot-reload")]
+#[test]
+fn ron_edits_change_movement_curve_and_strike_transitions_in_a_running_arena() {
+    use std::{fs, io, thread};
+
+    use engine_app::hot_reload::RonReload;
+
+    fn poll(arena: &mut Harness, reload: &mut RonReload<Tuning>) -> io::Result<bool> {
+        thread::sleep(Duration::from_millis(110));
+        reload.poll(
+            arena
+                .sim
+                .world_mut()
+                .resources_mut()
+                .get_mut::<Tuning>()
+                .unwrap(),
+        )
+    }
+
+    fn expect_speed(arena: &mut Harness, keys: &[(KeyCode, bool)], speed: f32) {
+        let before = arena
+            .sim
+            .world()
+            .get::<PhysicsPose>(arena.paddle)
+            .map_or(0.0, |pose| pose.translation.x);
+        arena.step(keys);
+        let delta = arena.snapshot().paddle.x - before;
+        assert!(
+            (delta - speed * STEP.as_secs_f32()).abs() < 0.0001,
+            "delta {delta}"
+        );
+    }
+
+    use KeyCode::{KeyD, Space};
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("arena.ron");
+    fs::write(&path, tuning::BUNDLED).unwrap();
+    let (mut reload, initial) = RonReload::load(path.clone(), Tuning::validate).unwrap();
+    let mut arena = Harness::new();
+    arena.sim.world_mut().resources_mut().insert(initial);
+    expect_speed(&mut arena, &[(KeyD, true)], 6.0);
+
+    let edited = "(
+        move_speed: 12.0,
+        strike_speed_curve: [(at: 0.0, speed: 18.0), (at: 0.5, speed: 30.0), (at: 1.0, speed: 6.0)],
+        transitions: (strike_to_cooldown_ticks: 3, cooldown_to_ready_ticks: 2),
+    )";
+    fs::write(&path, edited).unwrap();
+    assert!(poll(&mut arena, &mut reload).unwrap());
+    expect_speed(&mut arena, &[], 12.0);
+    expect_speed(&mut arena, &[(Space, true)], 18.0);
+    expect_speed(&mut arena, &[(Space, false)], 30.0);
+    expect_speed(&mut arena, &[], 6.0);
+    expect_speed(&mut arena, &[(Space, true)], 12.0);
+    assert!(!arena.snapshot().arena.striking());
+    expect_speed(&mut arena, &[(Space, false)], 12.0);
+    expect_speed(&mut arena, &[(Space, true)], 18.0);
+    assert!(arena.snapshot().arena.striking());
+
+    let invalid_curve = edited.replace("at: 0.5", "at: 1.0").replace("12.0", "99.0");
+    for (invalid, message) in [
+        ("(\n   !", "2:"),
+        (&invalid_curve, "positions must increase"),
+    ] {
+        fs::write(&path, invalid).unwrap();
+        let error = poll(&mut arena, &mut reload).unwrap_err().to_string();
+        assert!(error.starts_with(&path.display().to_string()), "{error}");
+        assert!(error.contains(message), "{error}");
+    }
+    assert!(!poll(&mut arena, &mut reload).unwrap());
+    expect_speed(&mut arena, &[(Space, false)], 30.0);
+    expect_speed(&mut arena, &[], 6.0);
+    expect_speed(&mut arena, &[], 12.0);
+
+    fs::write(&path, edited.replace("12.0", "10.0")).unwrap();
+    assert!(poll(&mut arena, &mut reload).unwrap());
+    expect_speed(&mut arena, &[], 10.0);
+    assert_eq!(arena.snapshot().arena.tick, 12);
+}

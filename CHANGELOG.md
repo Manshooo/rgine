@@ -7,6 +7,15 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- The desktop `platformer-3d` template runs a four-coin level with a checkpoint, live HUD, pause and restart. Fixed sensors report overlaps with kinematic characters.
+- Authored UI can display game-published text and dispatch typed button actions through pointer, touch and keyboard focus (ADR 0035).
+- Authored game UI draws text, images and panel backgrounds over a 3D scene. Development builds can reload XML layouts and CSS styles without discarding the current overlay on syntax errors (ADR 0034).
+- Game UI renders shaped text through a bounded glyph atlas with incremental texture uploads and Canvas clipping (ADR 0033).
+- Styled game UI resolves to logical widget and content rectangles with reusable shaped label and button text (ADR 0032).
+- Game UI can load project font faces and prepare measured glyph runs with kerning, fallback and wrapping in logical pixels (ADR 0031).
+- Games and UI can batch ordered screen-space quads and lines with textures, affine transforms, nested clipping and alpha blending over the 3D scene (ADR 0030).
+- Development builds can reload validated RON gameplay settings. Deflection Arena exposes movement speed, a strike speed curve and strike transitions.
+- Scene rendering interpolates opted-in physics bodies between fixed steps and snaps to the new pose on respawn.
 - Game UI widgets resolve CSS layout and typography, including inherited text styles and interaction states (ADR 0029).
 - Games can load XML widget trees with reusable panels, labels, images and buttons in `engine-ui` (ADR 0028).
 - Kinematic bodies can follow prescribed movement and deflect dynamic bodies. Deflection Arena exercises this with cylinder colliders, bouncing projectiles and a modal Input Actions context.

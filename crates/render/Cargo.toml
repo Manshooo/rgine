@@ -13,6 +13,7 @@ shader-reload = []
 engine-asset.workspace = true
 engine-core.workspace = true
 engine-platform.workspace = true
+serde.workspace = true
 tracing.workspace = true
 pollster = "0.4"
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "gles", "vulkan", "wgsl"] }

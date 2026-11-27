@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.rgine.platformer">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+    <application android:label="Platformer 3D"
+        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
+        android:hasCode="false">
+        <activity android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+            <meta-data android:name="android.app.lib_name" android:value="platformer_3d" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

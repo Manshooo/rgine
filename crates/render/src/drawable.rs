@@ -6,7 +6,10 @@ use std::time::{Duration, Instant};
 use engine_platform::SurfaceSource;
 use wgpu::CurrentSurfaceTexture;
 
+use crate::canvas::{Canvas, CanvasRenderer, Viewport};
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
+use crate::profile::gpu::GpuProfiler;
+use crate::profile::{GpuSample, Graphics as CaptureGraphics, PassProfile, RenderSample, Span};
 use crate::resources::{BindingMode, ResourceError, ResourceTable};
 use crate::scene::{
     DirectionalLight, HemisphereLight, MeshRegistry, SCENE_COLOR_FORMATS, Scene, SceneRenderer,
@@ -31,7 +34,7 @@ impl From<ResourceError> for RenderError {
 }
 
 /// The result of trying to present a frame.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawOutcome {
     /// The frame was submitted and presented.
     Presented,
@@ -65,8 +68,13 @@ pub struct Drawable {
     resources: ResourceTable,
     frame_graph: CompiledGraph<()>,
     scene: SceneRenderer,
+    canvas: CanvasRenderer,
     size: [u32; 2],
     surface_format: Option<wgpu::TextureFormat>,
+    present_mode: Option<wgpu::PresentMode>,
+    capture: Option<(usize, RenderSample)>,
+    capture_frame_id: Option<usize>,
+    gpu_profiler: Option<GpuProfiler>,
     immediate: bool,
     last_present: Option<Instant>,
 }
@@ -75,22 +83,37 @@ impl Drawable {
     /// Initializes the GPU backend for a live surface. Call outside native
     /// lifecycle callbacks, since adapter and device creation can block.
     pub fn new(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
-        Self::open(source, size, false)
+        Self::open(source, size, false, false)
+    }
+
+    /// Requests timestamp queries when the selected adapter supports them.
+    pub fn new_with_gpu_timing(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
+        Self::open(source, size, false, true)
     }
 
     /// Opens a drawable that requires Immediate presentation, DX12 and classic bindings.
     pub fn new_for_benchmark(source: SurfaceSource, size: [u32; 2]) -> Result<Self, RenderError> {
-        Self::open(source, size, true)
+        Self::open(source, size, true, false)
     }
 
-    fn open(source: SurfaceSource, size: [u32; 2], immediate: bool) -> Result<Self, RenderError> {
+    fn open(
+        source: SurfaceSource,
+        size: [u32; 2],
+        immediate: bool,
+        gpu_timing: bool,
+    ) -> Result<Self, RenderError> {
         let frame_graph = clear_graph().map_err(|error| RenderError(error.to_string()))?;
         let backend::Graphics {
             surface,
             instance,
             adapter,
             resources,
-        } = backend::open(&source)?;
+        } = backend::open(&source, gpu_timing)?;
+        let gpu_profiler = if gpu_timing {
+            GpuProfiler::new(&resources.device, &resources.queue)
+        } else {
+            None
+        };
         let info = adapter.get_info();
         if immediate
             && (info.backend != wgpu::Backend::Dx12
@@ -116,8 +139,13 @@ impl Drawable {
             resources,
             frame_graph,
             scene: SceneRenderer::default(),
+            canvas: CanvasRenderer::default(),
             size,
             surface_format: None,
+            present_mode: None,
+            capture: None,
+            capture_frame_id: None,
+            gpu_profiler,
             immediate,
             last_present: None,
         })
@@ -126,6 +154,64 @@ impl Drawable {
     /// Accesses this device's resource table before preparing the next frame.
     pub fn resources(&mut self) -> &mut ResourceTable {
         &mut self.resources
+    }
+
+    /// Starts CPU and workload profiling before the application builds its canvas.
+    pub fn begin_frame_capture(&mut self) {
+        if self.capture.is_none() {
+            self.capture = Some((self.pipeline_count(), RenderSample::default()));
+            self.resources.profile_uploads = Some(Default::default());
+        }
+    }
+
+    /// Captures CPU work and attempts GPU timing for the caller's frame ID.
+    pub fn begin_gpu_frame_capture(&mut self, frame_id: usize) {
+        self.begin_frame_capture();
+        self.capture_frame_id = Some(frame_id);
+    }
+
+    /// Collects completed GPU samples. Use the bounded final wait after measurement ends.
+    pub fn collect_gpu_timings(&mut self, finish: bool) -> Vec<(usize, GpuSample)> {
+        self.gpu_profiler
+            .as_mut()
+            .map_or_else(Vec::new, |gpu| gpu.poll(&self.resources.device, finish))
+    }
+
+    /// Finishes the current capture, including work done before acquisition.
+    pub fn finish_frame_capture(&mut self) -> Option<RenderSample> {
+        self.capture_frame_id = None;
+        let (before, mut sample) = self.capture.take()?;
+        sample.pipeline_creations = self.pipeline_count() - before;
+        sample.uploads = self.resources.profile_uploads.take().unwrap_or_default();
+        Some(sample)
+    }
+
+    /// Configuration of the drawable's most recently configured surface.
+    pub fn capture_graphics(&self) -> Option<CaptureGraphics> {
+        let format = self.surface_format?;
+        let info = self.adapter.get_info();
+        Some(CaptureGraphics {
+            adapter: info.name,
+            driver: format!("{} {}", info.driver, info.driver_info)
+                .trim()
+                .into(),
+            backend: format!("{:?}", info.backend),
+            binding_mode: format!("{:?}", self.resources.binding_mode()),
+            drawable_size: self.size,
+            surface_format: format!("{format:?}"),
+            present_mode: format!("{:?}", self.present_mode?),
+        })
+    }
+
+    fn pipeline_count(&self) -> usize {
+        self.scene_pipeline_creations() + self.canvas.pipeline_creations()
+    }
+
+    /// Returns the current drawable extent and native display scale for canvas layout.
+    pub fn canvas_viewport(&self) -> Result<Viewport, RenderError> {
+        Viewport::new(self.size, self.source.scale_factor() as f32).ok_or_else(|| {
+            RenderError("drawable size or display scale is invalid for canvas layout".into())
+        })
     }
 
     /// Sets the direct light for subsequent scene draws.
@@ -266,12 +352,13 @@ impl Drawable {
         }
         surface.configure(&self.resources.device, &config);
         self.surface_format = Some(config.format);
+        self.present_mode = Some(config.present_mode);
         Ok(config.format)
     }
 
     /// Clears the drawable to the given linear RGBA color and presents it.
     pub fn draw(&mut self, clear: [f64; 4]) -> Result<DrawOutcome, RenderError> {
-        self.present(clear, None)
+        self.present(clear, None, None)
     }
 
     /// Draws the extracted scene with the current device and drawable size.
@@ -281,28 +368,74 @@ impl Drawable {
         meshes: &MeshRegistry,
         scene: &Scene,
     ) -> Result<DrawOutcome, RenderError> {
-        self.present(clear, Some((meshes, scene)))
+        self.present(clear, Some((meshes, scene)), None)
+    }
+
+    /// Composites an ordered screen-space canvas over the scene in the same frame.
+    pub fn draw_scene_with_canvas(
+        &mut self,
+        clear: [f64; 4],
+        meshes: &MeshRegistry,
+        scene: &Scene,
+        canvas: &Canvas,
+    ) -> Result<DrawOutcome, RenderError> {
+        self.present(clear, Some((meshes, scene)), Some(canvas))
     }
 
     fn present(
         &mut self,
+        clear: [f64; 4],
+        scene: Option<(&MeshRegistry, &Scene)>,
+        canvas: Option<&Canvas>,
+    ) -> Result<DrawOutcome, RenderError> {
+        let mut capture = self.capture.take();
+        let result = self.present_inner(
+            clear,
+            scene,
+            canvas,
+            capture.as_mut().map(|(_, sample)| sample),
+        );
+        self.capture = capture;
+        result
+    }
+
+    fn present_inner(
+        &mut self,
         [r, g, b, a]: [f64; 4],
         scene: Option<(&MeshRegistry, &Scene)>,
+        canvas: Option<&Canvas>,
+        mut profile: Option<&mut RenderSample>,
     ) -> Result<DrawOutcome, RenderError> {
         if self.size.contains(&0) {
             return Ok(DrawOutcome::Idle);
         }
-        let pipelines_before = self.scene_pipeline_creations();
+        let pipelines_before = self.pipeline_count();
+        let start = profile.as_ref().map(|_| Instant::now());
         let format = self.configure_if_needed()?;
         if scene.is_some() {
             self.scene.prepare_pipelines(&mut self.resources, format)?;
         }
+        add_span(&mut profile, start, "prepare render pipelines");
         let surface = self
             .surface
             .as_ref()
             .ok_or_else(|| RenderError("graphics surface is unavailable".into()))?;
 
-        let (frame, suboptimal) = match surface.get_current_texture() {
+        let start = profile.as_ref().map(|_| Instant::now());
+        let acquired = surface.get_current_texture();
+        add_span(&mut profile, start, "surface acquire");
+        if let Some(profile) = &mut profile {
+            profile.acquisition = Some(match &acquired {
+                CurrentSurfaceTexture::Success(_) => "success",
+                CurrentSurfaceTexture::Suboptimal(_) => "suboptimal",
+                CurrentSurfaceTexture::Outdated => "outdated",
+                CurrentSurfaceTexture::Lost => "lost",
+                CurrentSurfaceTexture::Timeout => "timeout",
+                CurrentSurfaceTexture::Occluded => "occluded",
+                CurrentSurfaceTexture::Validation => "validation",
+            });
+        }
+        let (frame, suboptimal) = match acquired {
             CurrentSurfaceTexture::Success(frame) => (frame, false),
             CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
             CurrentSurfaceTexture::Outdated => {
@@ -322,24 +455,86 @@ impl Drawable {
             }
         };
 
+        let start = profile.as_ref().map(|_| Instant::now());
+        if let Some((meshes, scene)) = scene {
+            let size = [frame.texture.width(), frame.texture.height()];
+            self.scene
+                .prepare(&mut self.resources, meshes, scene, size)?;
+        }
+        let canvas_ready = if let Some(canvas) = canvas {
+            let viewport = self.canvas_viewport()?;
+            self.canvas
+                .prepare(&mut self.resources, canvas, viewport, format)?
+        } else {
+            false
+        };
+        add_span(&mut profile, start, "render preparation");
+        let start = profile.as_ref().map(|_| Instant::now());
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self
             .resources
             .device
             .create_command_encoder(&Default::default());
         let color = wgpu::Color { r, g, b, a };
-        if let Some((meshes, scene)) = scene {
-            let size = [frame.texture.width(), frame.texture.height()];
-            self.scene
-                .prepare(&mut self.resources, meshes, scene, size)?;
-            self.scene
-                .encode(&self.resources, scene, &mut encoder, &view, format, color)?;
+        let frame_id = self.capture_frame_id;
+        let queries = if let Some((sample, _)) = profile.as_deref_mut().zip(frame_id) {
+            match &mut self.gpu_profiler {
+                Some(gpu) => match gpu.begin() {
+                    Some(queries) => {
+                        sample.gpu = Some(GpuSample::Incomplete);
+                        Some(queries)
+                    }
+                    None => {
+                        sample.gpu = Some(GpuSample::Dropped);
+                        None
+                    }
+                },
+                None => {
+                    sample.gpu = Some(GpuSample::Unavailable);
+                    None
+                }
+            }
         } else {
-            self.encode_frame(&mut encoder, &view, color)?;
+            None
+        };
+        let mut passes = PassProfile {
+            sample: profile.as_deref_mut(),
+            queries,
+        };
+        if let Some((_, scene)) = scene {
+            self.scene.encode(
+                &self.resources,
+                scene,
+                &mut encoder,
+                &view,
+                format,
+                color,
+                &mut passes,
+            )?;
+        } else {
+            Self::encode_frame(&self.frame_graph, &mut encoder, &view, color, &mut passes)?;
         }
-        self.resources.queue.submit([encoder.finish()]);
+        let canvas_draw_calls = if canvas_ready {
+            self.canvas
+                .encode(&self.resources, &mut encoder, &view, format, &mut passes)?
+        } else {
+            0
+        };
+        if let Some((queries, frame_id)) = passes.queries.zip(frame_id) {
+            queries.resolve(&mut encoder, frame_id);
+        }
+        let buffer = encoder.finish();
+        add_span(&mut profile, start, "command encoding");
+        let start = profile.as_ref().map(|_| Instant::now());
+        self.resources.queue.submit([buffer]);
+        add_span(&mut profile, start, "queue submit");
         self.source.pre_present_notify();
+        let start = profile.as_ref().map(|_| Instant::now());
         self.resources.queue.present(frame);
+        if let Some(profile) = &mut profile {
+            profile.presented_at = Some(Instant::now());
+        }
+        add_span(&mut profile, start, "present");
         if self.immediate {
             self.last_present = Some(Instant::now());
         }
@@ -352,32 +547,36 @@ impl Drawable {
         tracing::debug!(
             width = self.size[0],
             height = self.size[1],
-            pipeline_creations = self.scene_pipeline_creations() - pipelines_before,
+            pipeline_creations = self.pipeline_count() - pipelines_before,
+            canvas_draw_calls,
             "presented frame"
         );
         Ok(DrawOutcome::Presented)
     }
 
     fn encode_frame(
-        &self,
+        graph: &CompiledGraph<()>,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         color: wgpu::Color,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<(), RenderError> {
-        let [backbuffer] = self.frame_graph.exports() else {
+        let [backbuffer] = graph.exports() else {
             return Err(RenderError(
                 "the frame graph must export one backbuffer".into(),
             ));
         };
-        self.frame_graph.execute(|pass| {
+        graph.execute(|pass| {
             if pass.writes() != [*backbuffer] {
                 return Err(RenderError(format!(
                     "frame pass {:?} does not target the backbuffer",
                     pass.name()
                 )));
             }
+            let (timestamp_writes, _) = profile.record("clear backbuffer");
             drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(pass.name()),
+                timestamp_writes,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -391,6 +590,12 @@ impl Drawable {
             }));
             Ok(())
         })
+    }
+}
+
+fn add_span(profile: &mut Option<&mut RenderSample>, start: Option<Instant>, name: &'static str) {
+    if let Some((profile, start)) = profile.as_mut().zip(start) {
+        profile.spans.push(Span::since(name, start));
     }
 }
 

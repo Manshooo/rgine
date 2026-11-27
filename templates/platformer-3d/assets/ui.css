@@ -1,0 +1,71 @@
+.hud, .scrim {
+    font-family: Platformer;
+    color: #eff9ff;
+}
+.hud {
+    margin: 18px;
+    padding: 13px 16px;
+    width: 330px;
+    max-width: 94%;
+    height: 106px;
+    flex-direction: column;
+    justify-content: space-between;
+    background-color: #102439ee;
+}
+.counter { gap: 11px; align-items: center; }
+.coin-label { font-size: 14px; color: #ffd266; }
+.total { font-size: 24px; }
+.progress { font-size: 16px; color: #9af5df; }
+.controls { font-size: 12px; color: #b5c6d9; }
+.scrim {
+    padding: 16px;
+    align-items: center;
+    justify-content: center;
+    background-color: #080e22b8;
+}
+.menu {
+    width: 320px;
+    max-width: 100%;
+    padding: 24px;
+    gap: 10px;
+    flex-direction: column;
+    background-color: #142e48;
+}
+.title {
+    font-size: 32px;
+    text-align: center;
+    margin: 0 0 8px;
+}
+button {
+    height: 42px;
+    padding: 9px;
+    font-size: 18px;
+    text-align: center;
+    background-color: #294864;
+}
+button.primary { background-color: #136f68; }
+button:hover, button:focus { background-color: #368284; }
+button:active { background-color: #0e5150; }
+.keyboard {
+    font-size: 12px;
+    text-align: center;
+    color: #b5c6d9;
+}
+.touch-controls {
+    margin: 14px 20px 22px;
+    flex-direction: column;
+    justify-content: space-between;
+    font-family: Platformer;
+    color: #eff9ff;
+}
+.touch-top { justify-content: flex-end; }
+.touch-bottom { justify-content: space-between; align-items: flex-end; }
+.touch-direction { gap: 8px; }
+button.touch-pause { width: 78px; background-color: #294864ee; }
+button.touch-key {
+    width: 62px;
+    height: 62px;
+    background-color: #294864ee;
+}
+button.touch-jump { width: 76px; background-color: #136f68ee; }
+button.touch-pause:active { background-color: #0e5150; }

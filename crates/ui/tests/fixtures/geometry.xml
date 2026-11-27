@@ -1,0 +1,13 @@
+<ui>
+    <template name="card" class="card">
+        <image id="icon" src="ui/coin.png" />
+        <panel id="copy" class="copy">
+            <label id="caption" text="Очки" />
+            <button id="action" text="OK" />
+        </panel>
+    </template>
+    <panel id="hud" class="hud">
+        <use id="left" template="card" />
+        <use id="right" template="card" />
+    </panel>
+</ui>

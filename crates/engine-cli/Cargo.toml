@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 engine-app.workspace = true
-engine-scene.workspace = true
+engine-scene = { workspace = true, features = ["authoring"] }
 ron = "0.10"
 serde.workspace = true
 tempfile = "3"

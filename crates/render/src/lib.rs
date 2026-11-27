@@ -2,8 +2,10 @@
 
 //! GPU frame rendering. Native surfaces and wgpu objects stay behind this API.
 
+pub mod canvas;
 mod drawable;
 pub mod graph;
+pub mod profile;
 pub mod resources;
 pub mod scene;
 mod shaders;

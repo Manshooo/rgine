@@ -1,4 +1,4 @@
-//! Development-only reload for a static prop and its authored placements.
+//! Development-only reload for assets, scenes and game data.
 
 use std::{
     convert::Infallible,
@@ -19,6 +19,14 @@ use engine_render::scene::SceneObject;
 use engine_scene::{SceneCompiler, SceneTypeName, Truth};
 
 use crate::scene::{MeshRegistry, Transform};
+
+mod ron_reload;
+#[cfg(feature = "ui")]
+mod ui_reload;
+
+pub use ron_reload::RonReload;
+#[cfg(feature = "ui")]
+pub use ui_reload::{UiDocument, UiReload};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 

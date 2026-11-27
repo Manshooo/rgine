@@ -45,3 +45,44 @@ A game supplies the flags for `:hover`, `:focus`, `:active` and `:disabled` to `
 A zero length can omit its unit. Decimal numbers are supported. Default layout uses automatic sizes and constraints, zero spacing, horizontal flow, cross-axis stretch, main-axis start alignment and a transparent background. Typography including `color` inherits. The root defaults to the project's default fonts at 16 logical pixels, weight 400, metrics-based line height, left alignment and white text. An inherited unitless line height multiplies the receiving widget's font size.
 
 The parser accepts CSS block comments. Unsupported syntax, properties and values produce an error with the stylesheet name, line and column. A caller can retain its previous stylesheet when a replacement fails to parse.
+
+## Measure label and button text
+
+Register the project's font assets and pass the resolved widget typography to `FontBook::prepare`.
+
+```rust
+use engine_ui::text::FontBook;
+
+let mut fonts = FontBook::default();
+fonts.load_face("assets/fonts/ui.ttf", 0, "Project UI", 400)?;
+fonts.load_face("assets/fonts/fallback.otf", 0, "Project Fallback", 400)?;
+fonts.set_default_families(["Project UI", "Project Fallback"]);
+let prepared = fonts.prepare("Score · Очки", &computed.typography, Some(120.0))?;
+```
+
+Use `prepared.size` for the text block's logical bounds and `prepared.lines` to place glyphs at draw time. Pass `None` for the intrinsic size without soft wrapping. Device scale applies to placement and rasterization. [ADR 0031](adr/0031-game-ui-text-layout.md).
+
+## Lay out styled widgets
+
+Call `engine_ui::geometry::layout` with the styled tree, the viewport's logical width and height, the project's fonts and an image size callback. Each result has outer and content rectangles. For labels and buttons, add the returned text origin to the positions of the prepared glyphs. Use `Rect::contains` with a logical pointer position and `Rect::physical` to place a rectangle in physical pixels. [ADR 0032](adr/0032-game-ui-widget-geometry.md).
+
+## Draw prepared text
+
+Enable the `canvas` feature of `engine-ui` and keep a `text::canvas::GlyphAtlas` for each Canvas. Call `begin_frame` in `App::with_canvas`, then pass the prepared layout, its logical origin and its color to `draw_text`. For a widget, use the origin returned with its prepared layout. The draw call uses the Canvas clip and device scale. [ADR 0033](adr/0033-game-ui-glyph-atlas.md).
+
+Run `cargo run --locked -p engine-app --example ui_text -- 1` or pass `2` to exercise the sample at twice that scale. Omit the argument to use the window's display scale. The HUD warms all digits on frame 0 and introduces a minus sign on frame 12. The sample reports rasterizations, atlas uploads and uploaded bytes. Set `RUST_LOG=engine_render::drawable=debug` to see the Canvas draw-call count.
+
+## Render and reload an authored overlay
+
+Resolve the stylesheet and lay out the tree using the logical Canvas viewport. Pass the result to `engine_ui::canvas::UiDrawList::prepare` and reuse the list while the UI and logical viewport size stay the same. Draw it from `App::with_canvas` using the glyph frame for that submission. Provide image dimensions to layout and return matching sampled groups when drawing.
+
+To try it, run `cargo run --locked -p engine-app --features hot-reload,ui --example ui_overlay`. Resize the window and edit the [sample layout](../crates/app/examples/fixtures/ui_overlay/hud.xml) or [stylesheet](../crates/app/examples/fixtures/ui_overlay/hud.css) while it runs. The example also accepts a directory containing `hud.xml` and `hud.css` after `--`, with an optional initial window width. A syntax error identifies the file, line and column. The current overlay stays visible until both files parse successfully. [ADR 0034](adr/0034-authored-ui-overlay.md).
+
+Activate **Collect coin** to update the bound HUD value. Tab and Shift+Tab move focus. Enter and Space activate a focused button. The pause button and Escape open or close the modal menu. Move the cube with A/D or the arrow keys. Space with no focused control and a held left click on the scene also move the cube right, so you can check that activating an interface button leaves the cube in place.
+
+The fixture puts two reusable cards in a row. Each card puts its image beside a column containing a label and button. Card width is 40% of the HUD content width with a minimum of 120 and maximum of 160 logical pixels. [XML fixture](../crates/ui/tests/fixtures/geometry.xml) · [CSS fixture](../crates/ui/tests/fixtures/geometry.css).
+
+| Physical viewport | Scale | Logical viewport | Logical card origins | Logical card size | First card in physical pixels `(x, y, w, h)` |
+| --- | ---: | --- | --- | --- | --- |
+| 400 × 250 | 1.25 | 320 × 200 | (20, 60), (180, 60) | 120 × 80 | (25, 75, 150, 100) |
+| 960 × 540 | 2 | 480 × 270 | (20, 95), (300, 95) | 160 × 80 | (40, 190, 320, 160) |

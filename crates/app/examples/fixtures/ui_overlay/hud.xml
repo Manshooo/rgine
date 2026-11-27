@@ -1,0 +1,19 @@
+<ui>
+    <panel class="hud">
+        <panel class="card score">
+            <image src="marker" />
+            <panel class="copy">
+                <label class="title" text="Score / Очки" />
+                <panel class="count">
+                    <label text="Coins" />
+                    <label text="0" bind="coins" />
+                </panel>
+            </panel>
+        </panel>
+        <panel class="card menu">
+            <label class="title" text="Playing" bind="mode" />
+            <button text="Collect coin" action="collect" />
+            <button text="Pause" bind="pause-button" action="toggle-pause" />
+        </panel>
+    </panel>
+</ui>

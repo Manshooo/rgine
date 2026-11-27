@@ -11,6 +11,7 @@ use super::{
 };
 use crate::RenderError;
 use crate::graph::{CompiledGraph, RenderGraph};
+use crate::profile::PassProfile;
 use crate::resources::{
     BINDLESS_SAMPLERS, BINDLESS_TEXTURES, BindingMode, BufferDescriptor, BufferHandle, BufferKind,
     ResourceError, ResourceTable, SampledBinding, SampledGroupHandle, SamplerDescriptor,
@@ -384,6 +385,10 @@ impl SceneRenderer {
             })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the optional profile belongs to the same render attempt"
+    )]
     pub(crate) fn encode(
         &self,
         table: &ResourceTable,
@@ -392,6 +397,7 @@ impl SceneRenderer {
         output: &wgpu::TextureView,
         format: wgpu::TextureFormat,
         clear: wgpu::Color,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<(), RenderError> {
         let target = self.target.as_ref().expect("scene targets prepared");
         let has_draws = scene.camera.is_some() && !scene.objects.is_empty();
@@ -400,33 +406,35 @@ impl SceneRenderer {
             match pass.data() {
                 ScenePass::DirectionalShadow => {
                     if has_draws {
-                        self.encode_shadows(
-                            table,
-                            scene,
-                            encoder,
-                            &target.shadow.view,
-                            pass.name(),
-                        )?;
+                        self.encode_shadows(table, scene, encoder, &target.shadow.view, profile)?;
                     }
                     return Ok(());
                 }
                 ScenePass::Skybox => {
                     if draw_skybox {
+                        let (timestamp_writes, work) = profile.record(ScenePass::Skybox.name());
                         self.skybox.as_ref().expect("skybox prepared").encode(
                             table,
                             encoder,
                             &self.pipelines.entries[&ScenePipelineKey::skybox(format)],
                             output,
                             clear,
-                            pass.name(),
+                            timestamp_writes,
                         )?;
+                        if let Some(work) = work {
+                            work.pipeline_changes = 1;
+                            work.binding(true);
+                            work.draw(1);
+                        }
                     }
                     return Ok(());
                 }
                 ScenePass::Opaque => {}
             }
+            let (timestamp_writes, mut work) = profile.record(ScenePass::Opaque.name());
             let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(pass.name()),
+                timestamp_writes,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: output,
                     depth_slice: None,
@@ -459,6 +467,14 @@ impl SceneRenderer {
                 if table.binding_mode() == BindingMode::Bindless {
                     render.set_bind_group(1, table.bindless_group()?, &[]);
                 }
+                if let Some(work) = &mut work {
+                    work.pipeline_changes = 1;
+                    work.binding(true);
+                    if table.binding_mode() == BindingMode::Bindless {
+                        work.binding(true);
+                    }
+                }
+                let mut previous_material = None;
                 for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
                     let mesh = &self.meshes[&object.mesh];
                     render.set_bind_group(0, table.gpu_uniform_group(*group)?, &[]);
@@ -466,6 +482,13 @@ impl SceneRenderer {
                         render.set_bind_group(1, &table.sampled_group(group)?.raw, &[]);
                     }
                     mesh.draw(table, &mut render)?;
+                    if let Some(work) = &mut work {
+                        work.binding(true);
+                        if let MaterialBinding::Classic(group) = mesh.binding {
+                            work.binding(previous_material.replace(group) != Some(group));
+                        }
+                        work.draw(mesh.index_count / 3);
+                    }
                 }
             }
             Ok(())
@@ -478,10 +501,13 @@ impl SceneRenderer {
         scene: &Scene,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        name: &str,
+        profile: &mut PassProfile<'_, '_>,
     ) -> Result<(), RenderError> {
+        let name = ScenePass::DirectionalShadow.name();
+        let (timestamp_writes, mut work) = profile.record(name);
         let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(name),
+            timestamp_writes,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view,
                 depth_ops: Some(wgpu::Operations {
@@ -493,10 +519,18 @@ impl SceneRenderer {
             ..Default::default()
         });
         render.set_pipeline(&self.pipelines.entries[&ScenePipelineKey::DIRECTIONAL_SHADOW]);
+        if let Some(work) = &mut work {
+            work.pipeline_changes = 1;
+        }
         let uniforms = self.uniforms.as_ref().expect("object bindings prepared");
         for (object, group) in scene.objects.iter().zip(&uniforms.groups) {
             render.set_bind_group(0, table.gpu_uniform_group(*group)?, &[]);
-            self.meshes[&object.mesh].draw(table, &mut render)?;
+            let mesh = &self.meshes[&object.mesh];
+            mesh.draw(table, &mut render)?;
+            if let Some(work) = &mut work {
+                work.binding(true);
+                work.draw(mesh.index_count / 3);
+            }
         }
         Ok(())
     }
@@ -507,6 +541,16 @@ enum ScenePass {
     DirectionalShadow,
     Skybox,
     Opaque,
+}
+
+impl ScenePass {
+    fn name(self) -> &'static str {
+        match self {
+            Self::DirectionalShadow => "directional shadow",
+            Self::Skybox => "skybox",
+            Self::Opaque => "opaque scene",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -550,17 +594,22 @@ impl SceneTargets {
         if skybox {
             // The background and the final color share the drawable attachment.
             let background = graph.import("drawable sky color");
-            graph.add_pass("skybox", &[], &[background], ScenePass::Skybox);
+            graph.add_pass(
+                ScenePass::Skybox.name(),
+                &[],
+                &[background],
+                ScenePass::Skybox,
+            );
             opaque_reads.push(background);
         }
         graph.add_pass(
-            "opaque scene",
+            ScenePass::Opaque.name(),
             &opaque_reads,
             &[color, depth],
             ScenePass::Opaque,
         );
         graph.add_pass(
-            "directional shadow",
+            ScenePass::DirectionalShadow.name(),
             &[],
             &[shadow],
             ScenePass::DirectionalShadow,

@@ -49,6 +49,48 @@ impl PhysicsPose {
     }
 }
 
+/// Opts a body into retaining two fixed-step poses for presentation.
+///
+/// Add this component alongside a [`RigidBody`]. The first sample and the
+/// first sample after body replacement use the latest pose for both endpoints.
+/// Replacing a body at a respawn point therefore snaps its presentation there.
+#[derive(Component, Debug, Default)]
+pub struct PhysicsInterpolation(Option<[PhysicsPose; 2]>);
+
+impl PhysicsInterpolation {
+    /// Samples the two poses at a fraction from zero (previous) to one (latest).
+    /// Returns `None` until physics publishes a pose or after the body is removed.
+    #[must_use]
+    pub fn sample(&self, alpha: f32) -> Option<PhysicsPose> {
+        let [previous, current] = self.0?;
+        if alpha <= 0.0 {
+            return Some(previous);
+        }
+        if alpha >= 1.0 || previous == current {
+            return Some(current);
+        }
+        Some(PhysicsPose {
+            translation: previous.translation.lerp(current.translation, alpha),
+            rotation: previous.rotation.slerp(current.rotation, alpha),
+        })
+    }
+
+    /// Whether the stored samples describe motion between the two steps.
+    #[must_use]
+    pub fn is_moving(&self) -> bool {
+        self.0
+            .is_some_and(|[previous, current]| previous != current)
+    }
+
+    /// Collapses both samples to the latest pose, for example when pausing a
+    /// manually stepped physics world while the app's fixed schedule continues.
+    pub fn snap_to_latest(&mut self) {
+        if let Some([_, current]) = self.0 {
+            self.0 = Some([current; 2]);
+        }
+    }
+}
+
 /// How a rigid body moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyKind {
@@ -132,7 +174,8 @@ pub struct Collider {
 
 impl Collider {
     /// Creates a collider at a body-relative pose, or a world-space pose
-    /// when standalone. Sensors emit overlaps without blocking motion.
+    /// when standalone. Sensors emit overlaps without blocking motion. Fixed
+    /// sensors also report overlaps with kinematic bodies.
     ///
     /// # Panics
     ///
@@ -250,7 +293,8 @@ impl PhysicsWorld {
 
     /// Reconciles lifecycle changes and advances one fixed step. Apply the
     /// supplied commands at the stage boundary to publish newly added poses
-    /// and remove poses for deleted bodies.
+    /// and remove poses for deleted bodies. Updates opted-in interpolation
+    /// samples from completed physics poses.
     ///
     /// # Panics
     ///
@@ -266,9 +310,15 @@ impl PhysicsWorld {
         assert!(!delta.is_zero(), "physics timestep must be positive");
         let pending = std::mem::take(&mut *self.pending.lock().unwrap());
         let mut refresh_queries = !pending.is_empty();
+        let mut interpolation = world.query::<&mut PhysicsInterpolation>();
         for (entity, changes) in pending {
             let body = world.get::<RigidBody>(entity);
             let collider = world.get::<Collider>(entity);
+            if changes.body_removed
+                && let Some(samples) = interpolation.get_mut(entity)
+            {
+                samples.0 = None;
+            }
             if self
                 .backend
                 .reconcile(entity, body.as_deref(), collider.as_deref(), changes)
@@ -292,6 +342,13 @@ impl PhysicsWorld {
         self.backend.step(seconds);
         let mut poses = world.query::<&mut PhysicsPose>();
         for (entity, pose) in self.backend.poses() {
+            if let Some(samples) = interpolation.get(entity) {
+                let previous = samples.0.map_or(pose, |[_, current]| current);
+                let updated = Some([previous, pose]);
+                if samples.0 != updated {
+                    interpolation.get_mut(entity).unwrap().0 = updated;
+                }
+            }
             if poses.get(entity) != Some(&pose) {
                 if let Some(current) = poses.get_mut(entity) {
                     *current = pose;

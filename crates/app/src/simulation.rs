@@ -2,12 +2,13 @@
 
 use std::any::Any;
 use std::num::NonZeroU32;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use engine_core::time::Clock;
 use engine_ecs::{Resources, Schedule, World};
 use engine_platform::{Input, InputEvent};
 
+use crate::capture::{Pending, Spans};
 use crate::{InputActions, InputRecording, ReplayError};
 
 /// Timing and catch-up policy for the fixed simulation.
@@ -50,6 +51,7 @@ pub struct StepContext {
     index: u64,
     input: Vec<InputEvent>,
     actions: Option<Box<dyn Any + Send + Sync>>,
+    pub(crate) profile: Option<Spans>,
 }
 
 impl StepContext {
@@ -133,11 +135,22 @@ impl Simulation {
     /// Advances by the elapsed frame duration and returns the number of steps
     /// actually run. Whole steps beyond the catch-up limit are discarded.
     pub fn advance(&mut self, elapsed: Duration) -> u32 {
+        self.advance_profiled(elapsed, None)
+    }
+
+    pub(crate) fn advance_profiled(
+        &mut self,
+        elapsed: Duration,
+        mut profile: Option<&mut Pending>,
+    ) -> u32 {
         let steps = self.clock.accumulate(
             elapsed,
             self.fixed_step.duration,
             self.fixed_step.max_steps.get(),
         );
+        if let Some(profile) = &mut profile {
+            profile.catch_up_steps += steps.saturating_sub(1);
+        }
         for _ in 0..steps {
             // Assign all queued input to the first available step. Further
             // catch-up steps receive empty batches until new input arrives.
@@ -145,19 +158,42 @@ impl Simulation {
             if let Some(recording) = &mut self.recording {
                 recording.steps.push(self.context.input.clone());
             }
-            self.run_step();
+            self.run_step(profile.as_deref_mut());
             self.context.input.clear();
         }
         steps
     }
 
-    fn run_step(&mut self) {
+    /// The fraction of the next fixed step accumulated by [`Self::advance`].
+    /// Use it to interpolate presentation between the last two completed poses.
+    #[must_use]
+    pub fn interpolation_alpha(&self) -> f32 {
+        self.clock
+            .remainder()
+            .div_duration_f64(self.fixed_step.duration) as f32
+    }
+
+    fn run_step(&mut self, mut profile: Option<&mut Pending>) {
+        let start = profile.as_ref().map(|_| Instant::now());
+        if let Some(profile) = &mut profile {
+            self.context.profile = Some(std::mem::take(&mut profile.spans));
+            profile.fixed_steps += 1;
+            profile.input_events += self.context.input.len();
+        }
         self.context.delta = self.fixed_step.duration;
         self.context.index += 1;
         if let Some(route_input) = &mut self.route_input {
+            let start = self.context.profile.as_ref().map(|_| Instant::now());
             route_input(&mut self.context);
+            if let Some((profile, start)) = self.context.profile.as_mut().zip(start) {
+                profile.push("route input actions", start);
+            }
         }
         self.schedule.run(&mut self.world, &mut self.context);
+        if let Some((profile, start)) = profile.zip(start) {
+            profile.spans = self.context.profile.take().expect("step capture installed");
+            profile.spans.push("fixed step", start);
+        }
     }
 
     /// The world after the latest completed simulation step.
@@ -209,15 +245,24 @@ impl Simulation {
     /// Start from the original world, systems, and resources. The wall-clock
     /// accumulator is left untouched.
     pub fn replay(&mut self, recording: &InputRecording) -> Result<(), ReplayError> {
+        self.validate_replay(recording)?;
+        for input in &recording.steps {
+            self.replay_step(input, None);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_replay(&self, recording: &InputRecording) -> Result<(), ReplayError> {
         recording.validate(self.fixed_step.duration, self.context.index)?;
         if self.recording.is_some() || !self.pending_input.is_empty() {
             return Err(ReplayError::LiveInputActive);
         }
-        for input in &recording.steps {
-            self.context.input.extend_from_slice(input);
-            self.run_step();
-            self.context.input.clear();
-        }
         Ok(())
+    }
+
+    pub(crate) fn replay_step(&mut self, input: &[InputEvent], profile: Option<&mut Pending>) {
+        self.context.input.extend_from_slice(input);
+        self.run_step(profile);
+        self.context.input.clear();
     }
 }

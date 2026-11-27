@@ -277,6 +277,34 @@ impl Mesh {
         mesh
     }
 
+    /// Bakes XZ quads into one solid mesh. Each entry supplies its center and full X and Z extents.
+    pub fn plane_batch(quads: impl IntoIterator<Item = (Vec3, [f32; 2])>) -> Option<Self> {
+        let mut mesh = Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            surface: MaterialTexture::Solid,
+            material: None,
+        };
+        for (center, [width, depth]) in quads {
+            if !center.is_finite()
+                || !width.is_finite()
+                || !depth.is_finite()
+                || width <= 0.0
+                || depth <= 0.0
+                || mesh.vertices.len() > u32::MAX as usize - 4
+            {
+                return None;
+            }
+            mesh.push_quad(
+                center,
+                Vec3::Y,
+                Vec3::X * (width * 0.5),
+                Vec3::NEG_Z * (depth * 0.5),
+            );
+        }
+        (!mesh.indices.is_empty()).then_some(mesh)
+    }
+
     /// A unit-height cylinder with diameter one, centered on its local Y axis.
     pub fn cylinder() -> Self {
         const SEGMENTS: u32 = 48;
@@ -385,9 +413,13 @@ impl Mesh {
     }
 
     fn quad(&mut self, center: Vec3, normal: Vec3, tangent: Vec3) {
-        let first = self.vertices.len() as u32;
         let u = tangent * 0.5;
         let v = normal.cross(tangent) * 0.5;
+        self.push_quad(center, normal, u, v);
+    }
+
+    fn push_quad(&mut self, center: Vec3, normal: Vec3, u: Vec3, v: Vec3) {
+        let first = self.vertices.len() as u32;
         let positions = [
             center - u - v,
             center + u - v,

@@ -213,6 +213,16 @@ The command validates the manifest and authored scene and prefab files before wr
 
 Run the command against a migrated project to verify that it is up to date. This returns success without creating a copy. See [ADR 0021](adr/0021-authored-scene-migration.md) for the supported scene versions.
 
+## Draw a screen-space canvas
+
+```sh
+cargo run --locked -p engine-app --example canvas_overlay
+```
+
+Resize the window to see the canvas stay centered over the 3D cube. The example builds translucent panels, a rotated texture and lines clipped by two intersecting rectangles. `RUST_LOG=engine_render::drawable=debug` reports `canvas_draw_calls` for presented frames. [ADR 0030](adr/0030-screen-space-canvas.md) defines the coordinates, blending and batching.
+
+Run the native pixel fixture with `cargo test --locked -p engine-render canvas_batches_preserve_order_clipping_and_scale_over_a_3d_scene -- --ignored`. On Windows, set `WGPU_BACKEND` to `dx12` to select Direct3D 12 for the offscreen test.
+
 ## Try Deflection Arena
 
 ```sh
@@ -228,6 +238,20 @@ cargo test --locked -p engine-app --features physics --example deflection_arena
 ```
 
 The tests verify a physical rebound, an early strike, the pause and restart controls, and replay of recorded input in the same fixed schedule.
+
+### Reload Deflection Arena tuning
+
+Copy `crates/app/examples/deflection_arena/tuning.ron` to `arena-dev.ron` and pass the copy to the example.
+
+```sh
+cargo run --locked -p engine-app --features physics,hot-reload --example deflection_arena -- arena-dev.ron
+```
+
+- Edit `move_speed` and hold a movement key to see the new speed on the next fixed step after reload.
+- Edit `strike_speed_curve` and press Space. Speeds are in world units per second. The curve interpolates linearly between points with strictly increasing `at` values from 0 to 1 over a strike.
+- Edit `strike_to_cooldown_ticks` or `cooldown_to_ready_ticks` and start a new strike. The `STRIKE`, `COOLDOWN` and `READY` indicators show the transitions. In-progress strikes keep their scheduled transition ticks.
+
+The terminal reports when it applies an edit. Try a negative `move_speed` to see the source path and validation error. The arena continues with the last valid tuning and applies a later correction. Use the same RON settings when comparing input replays.
 
 ## Reload an authored prop during development
 

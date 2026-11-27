@@ -95,6 +95,14 @@ impl Backend {
                 .restitution(collider.restitution)
                 .sensor(collider.sensor)
                 .active_events(rapier::ActiveEvents::COLLISION_EVENTS);
+            let builder = if collider.sensor {
+                builder.active_collision_types(
+                    rapier::ActiveCollisionTypes::default()
+                        | rapier::ActiveCollisionTypes::KINEMATIC_FIXED,
+                )
+            } else {
+                builder
+            };
             let handle = self.world.insert_collider(builder, handles.body);
             handles.collider = Some(handle);
             self.collider_entities.insert(handle, entity);

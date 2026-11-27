@@ -1,0 +1,25 @@
+.hud {
+    margin: 20px;
+    padding: 16px;
+    height: 168px;
+    gap: 16px;
+    justify-content: space-between;
+    background-color: #112335a6;
+    font-family: HUD;
+    color: #bef8e9;
+}
+.card {
+    padding: 10px;
+    gap: 10px;
+    background-color: #036663b8;
+}
+.score { width: 58%; align-items: center; }
+.menu { width: 34%; flex-direction: column; justify-content: space-between; }
+.copy { flex-direction: column; gap: 4px; width: 74%; }
+.count { gap: 8px; }
+.title { color: white; font-size: 18px; }
+image { width: 36px; height: 36px; }
+button { padding: 5px; background-color: #043d58; text-align: center; }
+button:hover, button:focus { background-color: #1c7288; }
+button:active { background-color: #087163; }
+button:disabled { background-color: #323d48; color: #a7b7be; }

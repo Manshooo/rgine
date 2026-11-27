@@ -105,6 +105,18 @@ fn rejects_invalid_widget_structure_and_ambiguous_identifiers() {
             "cannot contain widgets",
         ),
         (
+            r#"<ui><panel><label text="0" bind="" /></panel></ui>"#,
+            "bind must be a nonempty token",
+        ),
+        (
+            r#"<ui><panel><button text="Resume" action="pause menu" /></panel></ui>"#,
+            "action must be a nonempty token",
+        ),
+        (
+            r#"<ui><panel><label text="Resume" action="resume" /></panel></ui>"#,
+            "unexpected attribute action",
+        ),
+        (
             r#"<ui><panel><use id="x" template="missing" /></panel></ui>"#,
             "has not been declared",
         ),

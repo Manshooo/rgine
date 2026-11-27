@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use engine_app::core::glam::{Mat4, Vec3};
 use engine_app::ecs::{Commands, Entity, World};
 use engine_app::scene::{Camera, Mesh, MeshKey, MeshRegistry, PbrMaterial, Renderable, Transform};
@@ -44,9 +46,10 @@ fn rect(mesh: MeshKey, x: f32, z: f32, y: f32, width: f32, height: f32, color: [
     )
 }
 
-pub(super) fn scene(world: &mut World) -> (MeshRegistry, MeshKey, MeshKey, Overlay) {
+pub(super) fn scene(world: &mut World, mode: HudMode) -> (MeshRegistry, MeshKey, MeshKey, Overlay) {
     let mut meshes = MeshRegistry::default();
     let plane = meshes.insert(Mesh::plane());
+    let hud = Hud::new(mode, plane, &mut meshes);
     let disc = meshes.insert(Mesh::cylinder());
     let paddle = meshes.insert(Mesh::cylinder().with_pbr_material(PbrMaterial::new(0.28, 0.44)));
     let ball = meshes.insert(Mesh::sphere());
@@ -132,20 +135,22 @@ pub(super) fn scene(world: &mut World) -> (MeshRegistry, MeshKey, MeshKey, Overl
     for z in -4..=4 {
         rect(plane, 0.0, z as f32, 0.024, 15.95, 0.016, grid).spawn(world);
     }
-    for part in text(
-        plane,
-        "DEFLECTION ARENA",
-        Vec3::new(-7.94, 0.065, -5.34),
-        0.102,
-        INK,
-    )
-    .chain(text(
-        plane,
-        "WASD MOVE / SPACE STRIKE / ESC PAUSE",
-        Vec3::new(-7.94, 0.065, 5.01),
-        0.087,
-        MUTED,
-    )) {
+    for part in hud
+        .text(
+            plane,
+            "DEFLECTION ARENA",
+            Vec3::new(-7.94, 0.065, -5.34),
+            0.102,
+            INK,
+        )
+        .chain(hud.text(
+            plane,
+            "WASD MOVE / SPACE STRIKE / ESC PAUSE",
+            Vec3::new(-7.94, 0.065, 5.01),
+            0.087,
+            MUTED,
+        ))
+    {
         part.spawn(world);
     }
 
@@ -155,6 +160,7 @@ pub(super) fn scene(world: &mut World) -> (MeshRegistry, MeshKey, MeshKey, Overl
         ball,
         Overlay {
             plane,
+            hud,
             zone,
             target_live: false,
             counters: None,
@@ -199,6 +205,7 @@ impl Part {
 
 pub(super) struct Overlay {
     plane: MeshKey,
+    hud: Hud,
     zone: Entity,
     target_live: bool,
     counters: Option<[u32; 2]>,
@@ -225,13 +232,15 @@ impl Overlay {
             Marker::Scores.replace(
                 commands,
                 world,
-                text(plane, &hits, Vec3::new(1.9, 0.065, -5.34), 0.096, TEAL).chain(text(
-                    plane,
-                    &misses,
-                    Vec3::new(5.25, 0.065, -5.34),
-                    0.096,
-                    AMBER,
-                )),
+                self.hud
+                    .text(plane, &hits, Vec3::new(1.9, 0.065, -5.34), 0.096, TEAL)
+                    .chain(self.hud.text(
+                        plane,
+                        &misses,
+                        Vec3::new(5.25, 0.065, -5.34),
+                        0.096,
+                        AMBER,
+                    )),
             );
         }
 
@@ -247,7 +256,8 @@ impl Overlay {
             Marker::Status.replace(
                 commands,
                 world,
-                text(plane, label, Vec3::new(5.08, 0.065, 5.01), 0.087, color),
+                self.hud
+                    .text(plane, label, Vec3::new(5.08, 0.065, 5.01), 0.087, color),
             );
         }
 
@@ -272,28 +282,25 @@ impl Overlay {
                         ),
                     ]
                     .into_iter()
-                    .chain(text(
-                        plane,
-                        "PAUSED",
-                        Vec3::new(-1.49, 0.79, -1.55),
-                        0.13,
-                        INK,
-                    ))
-                    .chain(text(
+                    .chain(
+                        self.hud
+                            .text(plane, "PAUSED", Vec3::new(-1.49, 0.79, -1.55), 0.13, INK),
+                    )
+                    .chain(self.hud.text(
                         plane,
                         "RESUME",
                         Vec3::new(-1.23, 0.79, -0.53),
                         0.107,
                         active(MenuItem::Resume),
                     ))
-                    .chain(text(
+                    .chain(self.hud.text(
                         plane,
                         "RESTART",
                         Vec3::new(-1.42, 0.79, 0.20),
                         0.107,
                         active(MenuItem::Restart),
                     ))
-                    .chain(text(
+                    .chain(self.hud.text(
                         plane,
                         "W S SELECT / SPACE CONFIRM",
                         Vec3::new(-2.59, 0.79, 1.19),
@@ -303,6 +310,85 @@ impl Overlay {
                 }),
             );
         }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum HudMode {
+    Original,
+    Batched,
+    Hidden,
+}
+
+enum Hud {
+    Original,
+    Batched(HashMap<String, MeshKey>),
+    Hidden,
+}
+
+impl Hud {
+    fn new(mode: HudMode, plane: MeshKey, meshes: &mut MeshRegistry) -> Self {
+        match mode {
+            HudMode::Original => Self::Original,
+            HudMode::Hidden => Self::Hidden,
+            HudMode::Batched => {
+                let constant = [
+                    "DEFLECTION ARENA",
+                    "WASD MOVE / SPACE STRIKE / ESC PAUSE",
+                    "STRIKE",
+                    "COOLDOWN",
+                    "READY",
+                    "PAUSED",
+                    "RESUME",
+                    "RESTART",
+                    "W S SELECT / SPACE CONFIRM",
+                ];
+                let labels = constant
+                    .into_iter()
+                    .map(str::to_owned)
+                    .chain((0..100).flat_map(|value| {
+                        [format!("HITS {value:02}"), format!("MISS {value:02}")]
+                    }));
+                let batches = labels
+                    .map(|label| {
+                        let quads = text(plane, &label, Vec3::ZERO, 1.0, INK).map(|quad| {
+                            (
+                                quad.transform.translation,
+                                [quad.transform.scale.x, quad.transform.scale.z],
+                            )
+                        });
+                        let mesh = meshes
+                            .insert(Mesh::plane_batch(quads).expect("HUD text has glyph quads"));
+                        (label, mesh)
+                    })
+                    .collect();
+                Self::Batched(batches)
+            }
+        }
+    }
+
+    fn text<'a>(
+        &self,
+        plane: MeshKey,
+        value: &'a str,
+        origin: Vec3,
+        pixel: f32,
+        color: [f32; 4],
+    ) -> impl Iterator<Item = Part> + 'a {
+        let quads = matches!(self, Self::Original)
+            .then(|| text(plane, value, origin, pixel, color))
+            .into_iter()
+            .flatten();
+        let batch = match self {
+            Self::Batched(meshes) => Some(shape(
+                meshes[value],
+                origin,
+                Vec3::new(pixel, 1.0, pixel),
+                color,
+            )),
+            _ => None,
+        };
+        quads.chain(batch)
     }
 }
 
