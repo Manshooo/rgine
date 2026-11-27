@@ -7,6 +7,7 @@ Entries are written in the pull request that makes the change, under `Unreleased
 ## [Unreleased]
 
 ### Added
+- Development builds can reload validated RON gameplay settings. Deflection Arena exposes movement speed, a strike speed curve and strike transitions.
 - Scene rendering interpolates opted-in physics bodies between fixed steps and snaps to the new pose on respawn.
 - Game UI widgets resolve CSS layout and typography, including inherited text styles and interaction states (ADR 0029).
 - Games can load XML widget trees with reusable panels, labels, images and buttons in `engine-ui` (ADR 0028).

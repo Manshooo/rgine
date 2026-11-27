@@ -1,0 +1,11 @@
+(
+    move_speed: 6.0,
+    strike_speed_curve: [
+        (at: 0.0, speed: 18.0),
+        (at: 1.0, speed: 18.0),
+    ],
+    transitions: (
+        strike_to_cooldown_ticks: 8,
+        cooldown_to_ready_ticks: 21,
+    ),
+)

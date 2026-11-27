@@ -7,7 +7,7 @@ rust-version.workspace = true
 repository.workspace = true
 
 [features]
-hot-reload = ["dep:engine-scene", "engine-render/shader-reload"]
+hot-reload = ["dep:engine-scene", "dep:ron", "engine-render/shader-reload"]
 physics = ["dep:engine-physics"]
 
 [dependencies]
@@ -18,9 +18,11 @@ engine-physics = { workspace = true, optional = true }
 engine-platform.workspace = true
 engine-render.workspace = true
 engine-scene = { workspace = true, optional = true }
+ron = { version = "0.10", optional = true }
 serde.workspace = true
 
 [dev-dependencies]
+ron = "0.10"
 serde_json.workspace = true
 tempfile = "3"
 

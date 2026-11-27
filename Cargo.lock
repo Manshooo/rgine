@@ -462,6 +462,7 @@ dependencies = [
  "engine-platform",
  "engine-render",
  "engine-scene",
+ "ron",
  "serde",
  "serde_json",
  "tempfile",

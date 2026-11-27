@@ -1,5 +1,6 @@
 //! A top-down physics and input-context exercise.
 
+mod tuning;
 mod visuals;
 
 #[cfg(test)]
@@ -13,7 +14,9 @@ use engine_app::physics::{
 };
 use engine_app::platform::{Input, KeyCode, PhysicalKey, WindowDesc};
 use engine_app::scene::{MeshKey, MeshRegistry, Renderable, Transform};
-use engine_app::{ActionBinding, App, InputActions, InputContext, RenderError, StepContext};
+use engine_app::{ActionBinding, App, InputActions, InputContext, StepContext};
+
+use tuning::Tuning;
 
 const TARGET_RADIUS: f32 = 2.7;
 const PADDLE_RADIUS: f32 = 0.68;
@@ -24,8 +27,6 @@ const PADDLE_COLOR: [f32; 4] = [0.88, 0.39, 0.075, 1.0];
 const STRIKE_COLOR: [f32; 4] = [1.0, 0.86, 0.31, 1.0];
 const BALL_COLOR: [f32; 4] = [0.19, 0.67, 0.92, 1.0];
 const RETURN_COLOR: [f32; 4] = [0.25, 0.83, 0.38, 1.0];
-const STRIKE_TICKS: u64 = 8;
-const RECOVERY_TICKS: u64 = 29;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
@@ -56,6 +57,7 @@ struct Arena {
     step_physics: bool,
     target_live: bool,
     menu: MenuItem,
+    strike_started: u64,
     strike_until: u64,
     recovery_until: u64,
     strike_direction: Vec3,
@@ -73,16 +75,42 @@ struct Incoming {
     returned: bool,
 }
 
-fn main() -> Result<(), RenderError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    const CLEAR: [f64; 4] = [0.008, 0.016, 0.028, 1.0];
     engine_app::core::init_logging();
     let (app, meshes, _) = arena_app();
-    app.run_scene(meshes, [0.008, 0.016, 0.028, 1.0])
+    #[cfg(feature = "hot-reload")]
+    if let Some(path) = std::env::args_os().nth(1).map(std::path::PathBuf::from) {
+        use engine_app::hot_reload::RonReload;
+
+        let (mut reload, tuning) = RonReload::load(path.clone(), Tuning::validate)?;
+        let mut app = app;
+        app.world_mut().resources_mut().insert(tuning);
+        app.run_scene_with_refresh(meshes, CLEAR, move |world, _| {
+            let active = world.resources_mut().get_mut::<Tuning>().unwrap();
+            match reload.poll(active) {
+                Ok(true) => {
+                    eprintln!("hot reload: applied {}", path.display());
+                    true
+                }
+                Ok(false) => false,
+                Err(error) => {
+                    eprintln!("hot reload: {error}");
+                    false
+                }
+            }
+        })?;
+        return Ok(());
+    }
+    app.run_scene(meshes, CLEAR)?;
+    Ok(())
 }
 
 fn arena_app() -> (App, MeshRegistry, Entity) {
     let mut app = App::new().with_window(WindowDesc::new("Deflection Arena").with_size(1120, 720));
     let (meshes, cylinder, ball, mut overlay) = visuals::scene(app.world_mut());
     let world = app.world_mut();
+    world.resources_mut().insert(Tuning::bundled());
     let paddle = world.spawn_empty();
     world.insert(paddle, paddle_body()).unwrap();
     world
@@ -262,17 +290,23 @@ fn update(
     let position = world
         .get::<PhysicsPose>(paddle)
         .map_or(Vec3::Y * BODY_Y, |pose| pose.translation);
+    let tuning = world.resources().get::<Tuning>().unwrap();
     if strike && arena.tick >= arena.recovery_until {
         arena.strike_direction = direction
             .try_normalize()
             .unwrap_or_else(|| aim(world, position));
-        arena.strike_until = arena.tick + STRIKE_TICKS;
-        arena.recovery_until = arena.tick + RECOVERY_TICKS;
+        arena.strike_started = arena.tick;
+        arena.strike_until = arena.tick + u64::from(tuning.transitions.strike_to_cooldown_ticks);
+        arena.recovery_until =
+            arena.strike_until + u64::from(tuning.transitions.cooldown_to_ready_ticks);
     }
     let velocity = if arena.striking() {
-        arena.strike_direction * 18.0
+        let elapsed = arena.tick - arena.strike_started;
+        let last_tick = (arena.strike_until - arena.strike_started - 1).max(1);
+        let speed = tuning.strike_speed(elapsed as f32 / last_tick as f32);
+        arena.strike_direction * speed
     } else {
-        direction * 6.0
+        direction * tuning.move_speed
     };
     let desired = position + velocity * dt;
     let target = Vec3::new(
