@@ -456,7 +456,9 @@ pub struct SceneCamera {
 }
 
 impl SceneCamera {
-    fn clip_from_world(self, [width, height]: [u32; 2]) -> Option<Mat4> {
+    /// Builds the world-to-clip transform for a physical viewport extent.
+    /// Returns `None` for an invalid camera or an empty extent.
+    pub fn clip_from_world(self, [width, height]: [u32; 2]) -> Option<Mat4> {
         let valid = width > 0
             && height > 0
             && self.view.is_finite()
