@@ -1,0 +1,32 @@
+.hud {
+    padding: 12px 16px;
+    gap: 12px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    font-family: Fixture;
+    font-size: 12px;
+    line-height: 16px;
+}
+.card {
+    width: 40%;
+    min-width: 120px;
+    max-width: 160px;
+    height: 80px;
+    margin: 4px;
+    padding: 8px;
+    gap: 6px;
+    align-items: center;
+}
+.copy {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    width: 50%;
+    min-width: 55px;
+    height: 84.375%;
+    padding: 3px;
+    gap: 4px;
+}
+.copy > label { padding: 1px 2px; text-align: right; }
+.copy > button { height: 20px; padding: 2px 4px; text-align: center; }

@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod geometry;
 mod layout;
 mod style;
 pub mod text;

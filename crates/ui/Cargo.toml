@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 harfrust = "0.16.2"
+taffy = { version = "0.16", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
 unicode-bidi = "0.3"
 unicode-linebreak = "0.1"
 unicode-segmentation = "1.13"

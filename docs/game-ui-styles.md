@@ -61,3 +61,14 @@ let prepared = fonts.prepare("Score · Очки", &computed.typography, Some(120
 ```
 
 Use `prepared.size` for the text block's logical bounds and `prepared.lines` to place glyphs at draw time. Pass `None` for the intrinsic size without soft wrapping. Device scale applies to placement and rasterization. [ADR 0031](adr/0031-game-ui-text-layout.md).
+
+## Lay out styled widgets
+
+Call `engine_ui::geometry::layout` with the styled tree, the viewport's logical width and height, the project's fonts and an image size callback. Each result has outer and content rectangles. For labels and buttons, add the returned text origin to the positions of the prepared glyphs. Use `Rect::contains` with a logical pointer position and `Rect::physical` to place a rectangle in physical pixels. [ADR 0032](adr/0032-game-ui-widget-geometry.md).
+
+The fixture puts two reusable cards in a row. Each card puts its image beside a column containing a label and button. Card width is 40% of the HUD content width with a minimum of 120 and maximum of 160 logical pixels. [XML fixture](../crates/ui/tests/fixtures/geometry.xml) · [CSS fixture](../crates/ui/tests/fixtures/geometry.css).
+
+| Physical viewport | Scale | Logical viewport | Logical card origins | Logical card size | First card in physical pixels `(x, y, w, h)` |
+| --- | ---: | --- | --- | --- | --- |
+| 400 × 250 | 1.25 | 320 × 200 | (20, 60), (180, 60) | 120 × 80 | (25, 75, 150, 100) |
+| 960 × 540 | 2 | 480 × 270 | (20, 95), (300, 95) | 160 × 80 | (40, 190, 320, 160) |
