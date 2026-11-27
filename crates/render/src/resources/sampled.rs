@@ -326,6 +326,10 @@ impl ResourceTable {
         let (size, bytes_per_row) =
             texture.upload_layout(mip_level, array_layer, region, data.len())?;
         let [x, y] = region.map_or([0, 0], |(origin, _)| origin);
+        let start = self
+            .profile_uploads
+            .as_ref()
+            .map(|_| std::time::Instant::now());
         checked_gpu(&self.device, || {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -346,7 +350,9 @@ impl ResourceTable {
                 },
                 size,
             );
-        })
+        })?;
+        self.record_upload("texture upload", start, data.len());
+        Ok(())
     }
 
     /// Replaces texture backing while preserving the view contract and live group handles.

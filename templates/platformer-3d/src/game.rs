@@ -130,11 +130,7 @@ impl Game {
                     .unwrap()
                     .snap_to_latest();
             } else {
-                let delta = step.delta();
-                step.resources_mut()
-                    .get_mut::<PhysicsWorld>()
-                    .unwrap()
-                    .step(world, commands, delta);
+                step.step_physics(world, commands);
             }
         });
         let contact_stage = schedule.add_stage();

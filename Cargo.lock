@@ -522,6 +522,10 @@ dependencies = [
 [[package]]
 name = "engine-devtools"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "engine-ecs"
@@ -583,6 +587,7 @@ dependencies = [
  "engine-core",
  "engine-platform",
  "pollster",
+ "serde",
  "tempfile",
  "tracing",
  "wgpu",

@@ -17,6 +17,7 @@ pub use input_actions::{ActionBinding, ActionEvent, ActionState, InputActions, I
 pub use replay::{InputRecording, ReplayError};
 pub use simulation::{FixedStep, Simulation, StepContext};
 
+pub mod capture;
 mod frames;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
@@ -27,13 +28,15 @@ mod replay;
 pub mod scene;
 mod simulation;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use capture::{CaptureLimit, FrameCapture, Replay, ReplayReport, Session};
 use engine_ecs::{Schedule, StageId, Tick, World};
 use engine_platform::{
     Commands, Event, InputEvent, PlatformApp, PlatformError, SurfaceEvent, WindowDesc, WindowEvent,
     WindowId,
 };
+use engine_render::DrawOutcome;
 use frames::Frames;
 
 /// Configures a subsystem through the application's registration APIs.
@@ -201,6 +204,69 @@ impl App {
         self.run_with_frames(frames, None).map(drop)
     }
 
+    /// Runs a scene normally and returns the first bounded set of attempted frames.
+    pub fn run_scene_captured(
+        self,
+        meshes: scene::MeshRegistry,
+        clear_color: [f64; 4],
+        limit: CaptureLimit,
+    ) -> Result<FrameCapture, RenderError> {
+        let frames = self.scene_frames(meshes, clear_color);
+        let mut session = Session {
+            capture: Some(FrameCapture::new(limit)),
+            replay: None,
+        };
+        self.run_with_session(frames, None, Some(&mut session))?;
+        Ok(session.capture.take().expect("capture configured"))
+    }
+
+    /// Presents one recorded fixed step per delivered frame, for controlled comparisons.
+    /// Warmup frames run the same input path. Acquisition retries reuse the same world.
+    pub fn run_scene_replay(
+        self,
+        meshes: scene::MeshRegistry,
+        clear_color: [f64; 4],
+        recording: InputRecording,
+        warmup_frames: usize,
+        capture: Option<CaptureLimit>,
+    ) -> Result<ReplayReport, RenderError> {
+        self.simulation
+            .validate_replay(&recording)
+            .map_err(|error| RenderError::Replay(error.to_string()))?;
+        let steps = recording.step_count();
+        if warmup_frames >= steps {
+            return Err(RenderError::Replay(
+                "replay needs at least one measured frame".into(),
+            ));
+        }
+        let frames = self.scene_frames(meshes, clear_color);
+        let mut session = Session {
+            capture: capture.map(FrameCapture::new),
+            replay: Some(Replay {
+                recording,
+                warmup: warmup_frames,
+                presented: 0,
+                stepped: false,
+                previous_present: None,
+                intervals: Vec::with_capacity(steps - warmup_frames),
+            }),
+        };
+        self.run_with_session(frames, None, Some(&mut session))?;
+        let replay = session.replay.take().expect("replay configured");
+        if replay.presented != steps {
+            return Err(RenderError::Replay(format!(
+                "presented {} of {steps} replay frames",
+                replay.presented
+            )));
+        }
+        Ok(ReplayReport {
+            warmup_frames,
+            presented_frames: replay.presented - warmup_frames,
+            present_intervals_ns: replay.intervals,
+            capture: session.capture,
+        })
+    }
+
     /// Runs a scene with a development refresh between simulation and extraction.
     /// The callback returns whether it committed a world or mesh registry update.
     #[cfg(feature = "hot-reload")]
@@ -245,9 +311,18 @@ impl App {
     }
 
     fn run_with_frames(
+        self,
+        frames: Frames,
+        refresh: Option<Box<SceneRefresh<'_>>>,
+    ) -> Result<Frames, RenderError> {
+        self.run_with_session(frames, refresh, None)
+    }
+
+    fn run_with_session<'a>(
         mut self,
         mut frames: Frames,
-        refresh: Option<Box<SceneRefresh<'_>>>,
+        refresh: Option<Box<SceneRefresh<'a>>>,
+        session: Option<&'a mut Session>,
     ) -> Result<Frames, RenderError> {
         if let Some(draw) = self.canvas.take() {
             frames.set_canvas(draw);
@@ -255,6 +330,7 @@ impl App {
         let mut runner = Runner::new(self);
         runner.frames = Some(frames);
         runner.refresh = refresh;
+        runner.session = session;
         engine_platform::run(&mut runner).map_err(RenderError::Platform)?;
         match runner.render_failure {
             Some(error) => Err(error),
@@ -287,6 +363,7 @@ struct Runner<'a> {
     frames: Option<Frames>,
     refresh: Option<Box<SceneRefresh<'a>>>,
     render_failure: Option<RenderError>,
+    session: Option<&'a mut Session>,
 }
 
 impl Runner<'_> {
@@ -298,10 +375,25 @@ impl Runner<'_> {
             frames: None,
             refresh: None,
             render_failure: None,
+            session: None,
         }
     }
     fn update(&mut self, events: &[Event], commands: &mut Commands) {
         let elapsed = self.simulation.clock.sample_elapsed();
+        let replaying = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.replay.is_some());
+        let measured = self
+            .session
+            .as_deref_mut()
+            .and_then(Session::capture_attempt)
+            .and_then(FrameCapture::pending);
+        let input_start = measured.map(|frame| {
+            let now = Instant::now();
+            frame.start.get_or_insert(now);
+            now
+        });
         let mut active = !self.open.is_empty();
         let mut redraw = false;
         for event in events {
@@ -338,44 +430,167 @@ impl Runner<'_> {
                         redraw |= frames.window_event(*event, *window, commands);
                     }
                 }
-                Event::Input(input) if active && self.open.contains(&input.window) => {
+                Event::Input(input)
+                    if active && !replaying && self.open.contains(&input.window) =>
+                {
                     self.simulation.queue_input(std::iter::once(*input));
                 }
                 _ => {}
             }
         }
-        if active {
-            self.advance_frame(elapsed, redraw, commands);
+        if !events.is_empty()
+            && let Some((frame, start)) = pending(&mut self.session).zip(input_start)
+        {
+            frame.spans.push("platform input and events", start);
+        }
+        let outcome = if active && replaying {
+            redraw.then(|| self.replay_frame(commands)).flatten()
+        } else if active {
+            self.advance_frame(elapsed, redraw, commands)
+        } else {
+            None
+        };
+        let replay_present = if outcome == Some(DrawOutcome::Presented)
+            && let Some(replay) = self
+                .session
+                .as_deref_mut()
+                .and_then(|session| session.replay.as_mut())
+        {
+            if replay.presented + 1 == replay.recording.step_count() {
+                commands.exit();
+            } else if commands.queued_redraws() == 0 {
+                commands.request_redraw(&self.open);
+            }
+            Some(Instant::now())
+        } else {
+            None
+        };
+        if let Some(capture) = self
+            .session
+            .as_deref_mut()
+            .and_then(Session::capture_attempt)
+        {
+            if let Some(frame) = capture.pending() {
+                frame.redraw_requests += commands.queued_redraws();
+            }
+            if let Some(outcome) = outcome {
+                let label = match outcome {
+                    DrawOutcome::Presented => "presented",
+                    DrawOutcome::Retry => "retry",
+                    DrawOutcome::Idle => "idle",
+                };
+                capture.finish(label, Instant::now());
+            }
+        }
+        if let Some((replay, now)) = self
+            .session
+            .as_deref_mut()
+            .and_then(|session| session.replay.as_mut())
+            .zip(replay_present)
+        {
+            replay.present(now);
         }
     }
 
-    fn advance_frame(&mut self, elapsed: Duration, redraw: bool, commands: &mut Commands) {
-        let steps = self.simulation.advance(elapsed);
-        let Some(frames) = &mut self.frames else {
-            return;
-        };
+    fn advance_frame(
+        &mut self,
+        elapsed: Duration,
+        redraw: bool,
+        commands: &mut Commands,
+    ) -> Option<DrawOutcome> {
+        let steps = self
+            .simulation
+            .advance_profiled(elapsed, pending(&mut self.session));
+        let frames = self.frames.as_mut()?;
         let refreshed = self.refresh.as_mut().is_some_and(|refresh| {
             frames.refresh_scene(self.simulation.world_mut(), &mut **refresh)
         });
-        let changed = !frames.is_benchmark()
+        let changed = if !frames.is_benchmark()
             && (steps > 0 || refreshed || (redraw && frames.is_interpolating()))
-            && frames.extract_for_redraw(
-                self.simulation.world(),
+        {
+            extract(
+                frames,
+                &self.simulation,
                 self.simulation.interpolation_alpha(),
-            );
+                pending(&mut self.session),
+            )
+        } else {
+            false
+        };
         #[cfg(feature = "hot-reload")]
         let changed = frames.poll_scene_shaders() || changed;
         if redraw || frames.benchmark_interrupted() {
-            if let Err(error) = frames.draw(self.simulation.world(), &self.open, commands) {
-                if self.render_failure.is_none() {
-                    self.render_failure = Some(error);
-                }
-                commands.exit();
-            }
+            self.draw(commands)
         } else if changed {
             commands.request_redraw(&self.open);
+            None
+        } else {
+            None
         }
     }
+
+    fn replay_frame(&mut self, commands: &mut Commands) -> Option<DrawOutcome> {
+        let session = self.session.as_deref_mut().expect("replay session");
+        let replay = session.replay.as_mut().expect("replay configured");
+        if replay.presented == replay.recording.step_count() {
+            return None;
+        }
+        if !replay.stepped {
+            let mut profile = session
+                .capture
+                .as_mut()
+                .filter(|_| replay.presented >= replay.warmup)
+                .and_then(FrameCapture::pending);
+            let keys = &replay.recording.steps[replay.presented];
+            self.simulation.replay_step(keys, profile.as_deref_mut());
+            extract(
+                self.frames.as_mut().expect("scene frames"),
+                &self.simulation,
+                1.0,
+                profile,
+            );
+            replay.stepped = true;
+        }
+        self.draw(commands)
+    }
+
+    fn draw(&mut self, commands: &mut Commands) -> Option<DrawOutcome> {
+        let result = self.frames.as_mut()?.draw(
+            self.simulation.world(),
+            &self.open,
+            commands,
+            pending(&mut self.session),
+        );
+        match result {
+            Ok(outcome) => Some(outcome),
+            Err(error) => {
+                self.render_failure.get_or_insert(error);
+                commands.exit();
+                None
+            }
+        }
+    }
+}
+
+fn pending<'a>(session: &'a mut Option<&mut Session>) -> Option<&'a mut capture::Pending> {
+    session
+        .as_deref_mut()
+        .and_then(Session::capture_attempt)
+        .and_then(FrameCapture::pending)
+}
+
+fn extract(
+    frames: &mut Frames,
+    simulation: &Simulation,
+    alpha: f32,
+    capture: Option<&mut capture::Pending>,
+) -> bool {
+    let start = capture.as_ref().map(|_| Instant::now());
+    let changed = frames.extract_for_redraw(simulation.world(), alpha);
+    if let Some((capture, start)) = capture.zip(start) {
+        capture.spans.push("scene extraction", start);
+    }
+    changed
 }
 
 impl PlatformApp for &mut Runner<'_> {

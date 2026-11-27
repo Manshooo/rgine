@@ -69,6 +69,14 @@ impl Commands {
             .extend(windows.iter().copied().map(Command::RequestRedraw));
     }
 
+    /// Number of queued requests. The backend can coalesce them into one redraw.
+    pub fn queued_redraws(&self) -> usize {
+        self.queue
+            .iter()
+            .filter(|command| matches!(command, Command::RequestRedraw(_)))
+            .count()
+    }
+
     /// Queues an exit from the event loop.
     pub fn exit(&mut self) {
         self.queue.push(Command::Exit);

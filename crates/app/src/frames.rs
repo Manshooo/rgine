@@ -8,6 +8,7 @@ use engine_render::resources::{ResourceError, ResourceTable};
 use engine_render::scene::{MeshRegistry, Scene};
 use engine_render::{DrawOutcome, Drawable};
 
+use crate::capture::Pending;
 use crate::scene;
 
 mod benchmark;
@@ -28,6 +29,8 @@ pub enum RenderError {
     Graphics(engine_render::RenderError),
     /// The benchmark configuration changed or the pass was interrupted.
     Benchmark(String),
+    /// The requested fixed-step replay could not finish.
+    Replay(String),
 }
 
 impl fmt::Display for RenderError {
@@ -35,7 +38,7 @@ impl fmt::Display for RenderError {
         match self {
             Self::Platform(error) => error.fmt(formatter),
             Self::Graphics(error) => error.fmt(formatter),
-            Self::Benchmark(message) => formatter.write_str(message),
+            Self::Benchmark(message) | Self::Replay(message) => formatter.write_str(message),
         }
     }
 }
@@ -45,7 +48,7 @@ impl std::error::Error for RenderError {
         match self {
             Self::Platform(error) => Some(error),
             Self::Graphics(error) => Some(error),
-            Self::Benchmark(_) => None,
+            Self::Benchmark(_) | Self::Replay(_) => None,
         }
     }
 }
@@ -259,7 +262,8 @@ impl Frames {
         world: &World,
         windows: &[WindowId],
         commands: &mut Commands,
-    ) -> Result<(), RenderError> {
+        mut capture: Option<&mut Pending>,
+    ) -> Result<DrawOutcome, RenderError> {
         if self.benchmark_interrupted() {
             return Err(RenderError::Benchmark(
                 "the benchmark drawable changed or stopped being visible".into(),
@@ -272,7 +276,7 @@ impl Frames {
             )));
         }
         if self.occluded || self.size.contains(&0) {
-            return Ok(());
+            return Ok(DrawOutcome::Idle);
         }
         if let Some(Surface::Pending(source)) = self
             .surface
@@ -286,6 +290,9 @@ impl Frames {
             }
             .map_err(RenderError::Graphics)?;
             let startup = start.elapsed();
+            if capture.is_some() {
+                drawable.begin_frame_capture();
+            }
             if let Some(scene) = &self.scene {
                 drawable.set_directional_light(scene.light);
                 drawable.set_hemisphere_light(scene.hemisphere_light);
@@ -302,11 +309,17 @@ impl Frames {
                     benchmark.prepare(&drawable, scene, startup, prepare.elapsed())?;
                 }
             }
+            if let Some(capture) = &mut capture {
+                capture.spans.push("initialize drawable", start);
+            }
             self.surface = Some(Surface::Ready(Box::new(drawable)));
         }
         let interpolating = self.is_interpolating();
         if let Some(Surface::Ready(drawable)) = &mut self.surface {
             drawable.resize(self.size);
+            if capture.is_some() {
+                drawable.begin_frame_capture();
+            }
             let end_of_orbit =
                 if let (Some(benchmark), Some(scene)) = (&self.benchmark, &mut self.scene) {
                     benchmark.pose(&mut scene.snapshot)?
@@ -315,10 +328,14 @@ impl Frames {
                 };
             let outcome = match (&self.scene, &mut self.canvas) {
                 (Some(scene), Some(canvas)) => {
+                    let start = capture.as_ref().map(|_| Instant::now());
                     canvas.list.clear();
                     let viewport = drawable.canvas_viewport().map_err(RenderError::Graphics)?;
                     (canvas.draw)(world, viewport, drawable.resources(), &mut canvas.list)
                         .map_err(|error| RenderError::Graphics(error.into()))?;
+                    if let Some((capture, start)) = capture.as_mut().zip(start) {
+                        capture.spans.push("build canvas", start);
+                    }
                     drawable.draw_scene_with_canvas(
                         self.color,
                         &scene.meshes,
@@ -332,6 +349,9 @@ impl Frames {
                 (None, _) => drawable.draw(self.color),
             }
             .map_err(RenderError::Graphics)?;
+            if let Some(capture) = capture {
+                capture.render(drawable.finish_frame_capture(), drawable.capture_graphics());
+            }
             if let Some(benchmark) = &mut self.benchmark {
                 if benchmark.present(drawable, outcome, end_of_orbit)? {
                     commands.exit();
@@ -341,8 +361,9 @@ impl Frames {
             } else if outcome == DrawOutcome::Retry || interpolating {
                 commands.request_redraw(windows);
             }
+            return Ok(outcome);
         }
-        Ok(())
+        Ok(DrawOutcome::Idle)
     }
 }
 

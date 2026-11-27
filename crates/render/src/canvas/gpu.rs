@@ -3,6 +3,7 @@ use std::ops::Range;
 
 use super::{Canvas, Vec2, Viewport};
 use crate::RenderError;
+use crate::profile::RenderSample;
 use crate::resources::{
     BufferDescriptor, BufferHandle, BufferKind, ResourceError, ResourceTable, SampledBinding,
     SampledGroupHandle, SamplerDescriptor, TextureDescriptor, checked_gpu,
@@ -28,17 +29,15 @@ pub(crate) struct CanvasRenderer {
 }
 
 impl CanvasRenderer {
-    pub(crate) fn encode(
+    pub(crate) fn prepare(
         &mut self,
         table: &mut ResourceTable,
         canvas: &Canvas,
         viewport: Viewport,
-        encoder: &mut wgpu::CommandEncoder,
-        output: &wgpu::TextureView,
         format: wgpu::TextureFormat,
-    ) -> Result<usize, RenderError> {
+    ) -> Result<bool, RenderError> {
         if canvas.batches.is_empty() {
-            return Ok(0);
+            return Ok(false);
         }
         let white = match self.white {
             Some(handle) => handle,
@@ -91,12 +90,28 @@ impl CanvasRenderer {
             }
         }
         if self.draws.is_empty() {
-            return Ok(0);
+            return Ok(false);
         }
-        let buffer = self.upload(table)?;
+        self.upload(table)?;
         if let std::collections::hash_map::Entry::Vacant(entry) = self.pipelines.entry(format) {
             entry.insert(create_pipeline(&table.device, &layout, format)?);
         }
+        Ok(true)
+    }
+
+    pub(crate) fn pipeline_creations(&self) -> usize {
+        self.pipelines.len()
+    }
+
+    pub(crate) fn encode(
+        &self,
+        table: &ResourceTable,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        profile: Option<&mut RenderSample>,
+    ) -> Result<usize, RenderError> {
+        let buffer = self.buffer.expect("prepared canvas buffer").0;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("screen-space canvas"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -115,11 +130,20 @@ impl CanvasRenderer {
             0,
             table.gpu_buffer(buffer)?.slice(..self.bytes.len() as u64),
         );
+        let mut work = profile.map(|profile| profile.pass("screen-space canvas"));
+        if let Some(work) = &mut work {
+            work.pipeline_changes = 1;
+        }
+        let mut previous_texture = None;
         for draw in &self.draws {
             let [x, y, width, height] = draw.scissor;
             pass.set_scissor_rect(x, y, width, height);
             pass.set_bind_group(0, &table.sampled_group(draw.texture)?.raw, &[]);
             pass.draw(draw.vertices.clone(), 0..1);
+            if let Some(work) = &mut work {
+                work.binding(previous_texture.replace(draw.texture) != Some(draw.texture));
+                work.draw(draw.vertices.len() as u32 / 3);
+            }
         }
         Ok(self.draws.len())
     }

@@ -122,6 +122,7 @@ pub struct ResourceTable {
     layouts: HashMap<usize, wgpu::BindGroupLayout>,
     sampled: sampled::SampledResources,
     bindless: Option<sampled::BindlessTable>,
+    pub(crate) profile_uploads: Option<crate::profile::Uploads>,
 }
 
 impl ResourceTable {
@@ -146,6 +147,7 @@ impl ResourceTable {
             layouts: HashMap::new(),
             sampled: sampled::SampledResources::default(),
             bindless: None,
+            profile_uploads: None,
         }
     }
 
@@ -196,9 +198,25 @@ impl ResourceTable {
             )));
         }
         if !data.is_empty() {
+            let start = self
+                .profile_uploads
+                .as_ref()
+                .map(|_| std::time::Instant::now());
             self.queue.write_buffer(&buffer.raw, offset, data);
+            self.record_upload("buffer upload", start, data.len());
         }
         Ok(())
+    }
+
+    fn record_upload(
+        &mut self,
+        name: &'static str,
+        start: Option<std::time::Instant>,
+        size: usize,
+    ) {
+        if let Some((start, uploads)) = start.zip(self.profile_uploads.as_mut()) {
+            uploads.record(size, crate::profile::Span::since(name, start));
+        }
     }
 
     /// Replaces a buffer with fresh backing storage, preserving its handle and live bindings.

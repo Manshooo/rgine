@@ -744,12 +744,17 @@ fn scene_pixels_at_size(
             &view,
             format,
             wgpu::Color::BLACK,
+            None,
         )
         .unwrap();
     let draws = overlay.map_or(0, |(renderer, canvas, viewport)| {
-        renderer
-            .encode(table, canvas, viewport, &mut encoder, &view, format)
-            .unwrap()
+        if renderer.prepare(table, canvas, viewport, format).unwrap() {
+            renderer
+                .encode(table, &mut encoder, &view, format, None)
+                .unwrap()
+        } else {
+            0
+        }
     });
     assert_eq!(renderer.pipeline_creations() - prepared, 0);
     encoder.copy_texture_to_buffer(

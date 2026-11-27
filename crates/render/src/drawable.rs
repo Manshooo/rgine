@@ -8,6 +8,7 @@ use wgpu::CurrentSurfaceTexture;
 
 use crate::canvas::{Canvas, CanvasRenderer, Viewport};
 use crate::graph::{CompiledGraph, GraphError, RenderGraph};
+use crate::profile::{Graphics as CaptureGraphics, RenderSample, Span};
 use crate::resources::{BindingMode, ResourceError, ResourceTable};
 use crate::scene::{
     DirectionalLight, HemisphereLight, MeshRegistry, SCENE_COLOR_FORMATS, Scene, SceneRenderer,
@@ -32,7 +33,7 @@ impl From<ResourceError> for RenderError {
 }
 
 /// The result of trying to present a frame.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawOutcome {
     /// The frame was submitted and presented.
     Presented,
@@ -69,6 +70,8 @@ pub struct Drawable {
     canvas: CanvasRenderer,
     size: [u32; 2],
     surface_format: Option<wgpu::TextureFormat>,
+    present_mode: Option<wgpu::PresentMode>,
+    capture: Option<(usize, RenderSample)>,
     immediate: bool,
     last_present: Option<Instant>,
 }
@@ -121,6 +124,8 @@ impl Drawable {
             canvas: CanvasRenderer::default(),
             size,
             surface_format: None,
+            present_mode: None,
+            capture: None,
             immediate,
             last_present: None,
         })
@@ -129,6 +134,43 @@ impl Drawable {
     /// Accesses this device's resource table before preparing the next frame.
     pub fn resources(&mut self) -> &mut ResourceTable {
         &mut self.resources
+    }
+
+    /// Starts CPU and workload profiling before the application builds its canvas.
+    pub fn begin_frame_capture(&mut self) {
+        if self.capture.is_none() {
+            self.capture = Some((self.pipeline_count(), RenderSample::default()));
+            self.resources.profile_uploads = Some(Default::default());
+        }
+    }
+
+    /// Finishes the current capture, including work done before acquisition.
+    pub fn finish_frame_capture(&mut self) -> Option<RenderSample> {
+        let (before, mut sample) = self.capture.take()?;
+        sample.pipeline_creations = self.pipeline_count() - before;
+        sample.uploads = self.resources.profile_uploads.take().unwrap_or_default();
+        Some(sample)
+    }
+
+    /// Configuration of the drawable's most recently configured surface.
+    pub fn capture_graphics(&self) -> Option<CaptureGraphics> {
+        let format = self.surface_format?;
+        let info = self.adapter.get_info();
+        Some(CaptureGraphics {
+            adapter: info.name,
+            driver: format!("{} {}", info.driver, info.driver_info)
+                .trim()
+                .into(),
+            backend: format!("{:?}", info.backend),
+            binding_mode: format!("{:?}", self.resources.binding_mode()),
+            drawable_size: self.size,
+            surface_format: format!("{format:?}"),
+            present_mode: format!("{:?}", self.present_mode?),
+        })
+    }
+
+    fn pipeline_count(&self) -> usize {
+        self.scene_pipeline_creations() + self.canvas.pipeline_creations()
     }
 
     /// Returns the current drawable extent and native display scale for canvas layout.
@@ -276,6 +318,7 @@ impl Drawable {
         }
         surface.configure(&self.resources.device, &config);
         self.surface_format = Some(config.format);
+        self.present_mode = Some(config.present_mode);
         Ok(config.format)
     }
 
@@ -307,24 +350,58 @@ impl Drawable {
 
     fn present(
         &mut self,
+        clear: [f64; 4],
+        scene: Option<(&MeshRegistry, &Scene)>,
+        canvas: Option<&Canvas>,
+    ) -> Result<DrawOutcome, RenderError> {
+        let mut capture = self.capture.take();
+        let result = self.present_inner(
+            clear,
+            scene,
+            canvas,
+            capture.as_mut().map(|(_, sample)| sample),
+        );
+        self.capture = capture;
+        result
+    }
+
+    fn present_inner(
+        &mut self,
         [r, g, b, a]: [f64; 4],
         scene: Option<(&MeshRegistry, &Scene)>,
         canvas: Option<&Canvas>,
+        mut profile: Option<&mut RenderSample>,
     ) -> Result<DrawOutcome, RenderError> {
         if self.size.contains(&0) {
             return Ok(DrawOutcome::Idle);
         }
-        let pipelines_before = self.scene_pipeline_creations();
+        let pipelines_before = self.pipeline_count();
+        let start = profile.as_ref().map(|_| Instant::now());
         let format = self.configure_if_needed()?;
         if scene.is_some() {
             self.scene.prepare_pipelines(&mut self.resources, format)?;
         }
+        add_span(&mut profile, start, "prepare render pipelines");
         let surface = self
             .surface
             .as_ref()
             .ok_or_else(|| RenderError("graphics surface is unavailable".into()))?;
 
-        let (frame, suboptimal) = match surface.get_current_texture() {
+        let start = profile.as_ref().map(|_| Instant::now());
+        let acquired = surface.get_current_texture();
+        add_span(&mut profile, start, "surface acquire");
+        if let Some(profile) = &mut profile {
+            profile.acquisition = Some(match &acquired {
+                CurrentSurfaceTexture::Success(_) => "success",
+                CurrentSurfaceTexture::Suboptimal(_) => "suboptimal",
+                CurrentSurfaceTexture::Outdated => "outdated",
+                CurrentSurfaceTexture::Lost => "lost",
+                CurrentSurfaceTexture::Timeout => "timeout",
+                CurrentSurfaceTexture::Occluded => "occluded",
+                CurrentSurfaceTexture::Validation => "validation",
+            });
+        }
+        let (frame, suboptimal) = match acquired {
             CurrentSurfaceTexture::Success(frame) => (frame, false),
             CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
             CurrentSurfaceTexture::Outdated => {
@@ -344,37 +421,66 @@ impl Drawable {
             }
         };
 
+        let start = profile.as_ref().map(|_| Instant::now());
+        if let Some((meshes, scene)) = scene {
+            let size = [frame.texture.width(), frame.texture.height()];
+            self.scene
+                .prepare(&mut self.resources, meshes, scene, size)?;
+        }
+        let canvas_ready = if let Some(canvas) = canvas {
+            let viewport = self.canvas_viewport()?;
+            self.canvas
+                .prepare(&mut self.resources, canvas, viewport, format)?
+        } else {
+            false
+        };
+        add_span(&mut profile, start, "render preparation");
+        let start = profile.as_ref().map(|_| Instant::now());
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self
             .resources
             .device
             .create_command_encoder(&Default::default());
         let color = wgpu::Color { r, g, b, a };
-        if let Some((meshes, scene)) = scene {
-            let size = [frame.texture.width(), frame.texture.height()];
-            self.scene
-                .prepare(&mut self.resources, meshes, scene, size)?;
-            self.scene
-                .encode(&self.resources, scene, &mut encoder, &view, format, color)?;
-        } else {
-            self.encode_frame(&mut encoder, &view, color)?;
-        }
-        let canvas_draw_calls = if let Some(canvas) = canvas {
-            let viewport = self.canvas_viewport()?;
-            self.canvas.encode(
-                &mut self.resources,
-                canvas,
-                viewport,
+        if let Some((_, scene)) = scene {
+            self.scene.encode(
+                &self.resources,
+                scene,
                 &mut encoder,
                 &view,
                 format,
+                color,
+                profile.as_deref_mut(),
+            )?;
+        } else {
+            self.encode_frame(&mut encoder, &view, color)?;
+            if let Some(profile) = &mut profile {
+                profile.pass("clear backbuffer");
+            }
+        }
+        let canvas_draw_calls = if canvas_ready {
+            self.canvas.encode(
+                &self.resources,
+                &mut encoder,
+                &view,
+                format,
+                profile.as_deref_mut(),
             )?
         } else {
             0
         };
-        self.resources.queue.submit([encoder.finish()]);
+        let buffer = encoder.finish();
+        add_span(&mut profile, start, "command encoding");
+        let start = profile.as_ref().map(|_| Instant::now());
+        self.resources.queue.submit([buffer]);
+        add_span(&mut profile, start, "queue submit");
         self.source.pre_present_notify();
+        let start = profile.as_ref().map(|_| Instant::now());
         self.resources.queue.present(frame);
+        if let Some(profile) = &mut profile {
+            profile.presented_at = Some(Instant::now());
+        }
+        add_span(&mut profile, start, "present");
         if self.immediate {
             self.last_present = Some(Instant::now());
         }
@@ -387,7 +493,7 @@ impl Drawable {
         tracing::debug!(
             width = self.size[0],
             height = self.size[1],
-            pipeline_creations = self.scene_pipeline_creations() - pipelines_before,
+            pipeline_creations = self.pipeline_count() - pipelines_before,
             canvas_draw_calls,
             "presented frame"
         );
@@ -427,6 +533,12 @@ impl Drawable {
             }));
             Ok(())
         })
+    }
+}
+
+fn add_span(profile: &mut Option<&mut RenderSample>, start: Option<Instant>, name: &'static str) {
+    if let Some((profile, start)) = profile.as_mut().zip(start) {
+        profile.spans.push(Span::since(name, start));
     }
 }
 

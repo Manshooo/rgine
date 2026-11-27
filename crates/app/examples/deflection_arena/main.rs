@@ -1,5 +1,6 @@
 //! A top-down physics and input-context exercise.
 
+mod profile;
 mod tuning;
 mod visuals;
 
@@ -78,6 +79,10 @@ struct Incoming {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const CLEAR: [f64; 4] = [0.008, 0.016, 0.028, 1.0];
     engine_app::core::init_logging();
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--profile")) {
+        return profile::run(arguments, CLEAR);
+    }
     let (app, meshes, _) = arena_app();
     #[cfg(feature = "hot-reload")]
     if let Some(path) = std::env::args_os().nth(1).map(std::path::PathBuf::from) {
@@ -107,8 +112,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn arena_app() -> (App, MeshRegistry, Entity) {
+    arena_with_hud(visuals::HudMode::Original)
+}
+
+fn arena_with_hud(mode: visuals::HudMode) -> (App, MeshRegistry, Entity) {
     let mut app = App::new().with_window(WindowDesc::new("Deflection Arena").with_size(1120, 720));
-    let (meshes, cylinder, ball, mut overlay) = visuals::scene(app.world_mut());
+    let (meshes, cylinder, ball, mut overlay) = visuals::scene(app.world_mut(), mode);
     let world = app.world_mut();
     world.resources_mut().insert(Tuning::bundled());
     let paddle = world.spawn_empty();
@@ -162,11 +171,7 @@ fn arena_app() -> (App, MeshRegistry, Entity) {
     let physics = schedule.add_stage();
     schedule.add_system(physics, |world, commands, step, _| {
         if step.resources().get::<Arena>().unwrap().step_physics {
-            let delta = step.delta();
-            step.resources_mut()
-                .get_mut::<PhysicsWorld>()
-                .unwrap()
-                .step(world, commands, delta);
+            step.step_physics(world, commands);
         } else {
             world
                 .query::<&mut PhysicsInterpolation>()
