@@ -21,6 +21,8 @@ pub enum Command {
     CloseWindow(WindowId),
     /// Ask a window to redraw.
     RequestRedraw(WindowId),
+    /// Enable or disable committed text events for a window.
+    SetTextInput(WindowId, bool),
     /// Leave the event loop and return from [`run`](crate::run).
     Exit,
 }
@@ -67,6 +69,11 @@ impl Commands {
     pub fn request_redraw(&mut self, windows: &[WindowId]) {
         self.queue
             .extend(windows.iter().copied().map(Command::RequestRedraw));
+    }
+
+    /// Requests committed text events for the focused text field in this window.
+    pub fn set_text_input(&mut self, window: WindowId, enabled: bool) {
+        self.queue.push(Command::SetTextInput(window, enabled));
     }
 
     /// Number of queued requests. The backend can coalesce them into one redraw.

@@ -1,13 +1,13 @@
 //! winit-backed event loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::WindowEvent as BackendWindowEvent,
+    event::{ElementState, Ime, WindowEvent as BackendWindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId as BackendWindowId},
 };
@@ -57,6 +57,7 @@ struct Driver<A> {
     commands: Commands,
     windows: HashMap<WindowId, Arc<Window>>,
     handles: HashMap<BackendWindowId, WindowId>,
+    text_windows: HashSet<WindowId>,
     error: Option<PlatformError>,
 }
 
@@ -69,6 +70,7 @@ impl<A: PlatformApp> Driver<A> {
             commands: Commands::default(),
             windows: HashMap::new(),
             handles: HashMap::new(),
+            text_windows: HashSet::new(),
             error: None,
         }
     }
@@ -107,6 +109,7 @@ impl<A: PlatformApp> Driver<A> {
             }
             Command::CloseWindow(window) => {
                 if let Some(closed) = self.windows.remove(&window) {
+                    self.text_windows.remove(&window);
                     self.app.surface_event(SurfaceEvent::Invalidating(window));
                     self.handles.remove(&closed.id());
                     drop(closed);
@@ -119,6 +122,16 @@ impl<A: PlatformApp> Driver<A> {
             Command::RequestRedraw(window) => {
                 if let Some(target) = self.windows.get(&window) {
                     target.request_redraw();
+                }
+            }
+            Command::SetTextInput(window, enabled) => {
+                if let Some(target) = self.windows.get(&window) {
+                    target.set_ime_allowed(enabled);
+                    if enabled {
+                        self.text_windows.insert(window);
+                    } else {
+                        self.text_windows.remove(&window);
+                    }
                 }
             }
             Command::Exit => event_loop.exit(),
@@ -186,9 +199,27 @@ impl<A: PlatformApp> ApplicationHandler for Driver<A> {
                 self.app.surface_event(SurfaceEvent::Invalidating(window));
                 self.handles.remove(&window_id);
                 self.windows.remove(&window);
+                self.text_windows.remove(&window);
                 WindowEvent::Destroyed
             }
             input => {
+                if self.text_windows.contains(&window) {
+                    let committed = match &input {
+                        BackendWindowEvent::Ime(Ime::Commit(text)) => Some(text.as_str()),
+                        BackendWindowEvent::KeyboardInput {
+                            event,
+                            is_synthetic: false,
+                            ..
+                        } if event.state == ElementState::Pressed => event.text.as_deref(),
+                        _ => None,
+                    };
+                    if let Some(committed) = committed {
+                        let text: String = committed.chars().filter(|c| !c.is_control()).collect();
+                        if !text.is_empty() {
+                            self.events.push(Event::TextInput { window, text });
+                        }
+                    }
+                }
                 if let Some(input) = winit_input::translate(input) {
                     self.events.push(Event::Input(InputEvent {
                         window,
