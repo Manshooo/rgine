@@ -132,6 +132,12 @@ fn classic_sampled_groups_preserve_view_and_binding_across_updates() {
         }
     ";
     let probe = SamplingProbe::new(&table, group, shader, "sample_color");
+    let neighbour = SamplingProbe::new(
+        &table,
+        group,
+        &shader.replace("0.375", "0.75"),
+        "sample_color",
+    );
     let original = table.sampled_group(group).unwrap().raw.clone();
     let duplicate_original = table.sampled_group(duplicate).unwrap().raw.clone();
 
@@ -145,6 +151,24 @@ fn classic_sampled_groups_preserve_view_and_binding_across_updates() {
     table.write_texture(texture, 1, 1, &blue.repeat(2)).unwrap();
     assert_eq!(table.sampled_group(group).unwrap().raw, original);
     assert_eq!(probe.sample(&table, group), blue);
+    table
+        .write_texture_region(texture, 1, 1, [0, 0], [1, 1], &red)
+        .unwrap();
+    assert_eq!(probe.sample(&table, group), red);
+    assert_eq!(neighbour.sample(&table, group), blue);
+    assert_eq!(table.sampled_group(group).unwrap().raw, original);
+    for (origin, size, texels) in [
+        ([2, 0], [1, 1], &red[..]),
+        ([u32::MAX, 0], [1, 1], &red[..]),
+        ([0, 0], [0, 1], &[][..]),
+        ([1, 0], [1, 1], &red[..3]),
+    ] {
+        assert!(matches!(
+            table.write_texture_region(texture, 1, 1, origin, size, texels),
+            Err(ResourceError::InvalidRange(_))
+        ));
+    }
+    table.write_texture(texture, 1, 1, &blue.repeat(2)).unwrap();
     for (mip, layer, bytes) in [
         (2, 1, &[0; 8][..]),
         (1, 2, &[0; 8][..]),

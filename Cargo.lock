@@ -462,6 +462,7 @@ dependencies = [
  "engine-platform",
  "engine-render",
  "engine-scene",
+ "engine-ui",
  "ron",
  "serde",
  "serde_json",
@@ -607,7 +608,10 @@ version = "0.1.0"
 name = "engine-ui"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph_rasterizer",
+ "engine-render",
  "harfrust",
+ "skrifa",
  "taffy",
  "unicode-bidi",
  "unicode-linebreak",
@@ -2213,6 +2217,19 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "skrifa"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e85ba678a6023a063d0a78c8770f1c166674ef46af13523d05eff67430f79dfe"
+dependencies = [
+ "bytemuck",
+ "once_cell",
+ "read-fonts",
+ "smallvec",
+ "yoke",
+]
 
 [[package]]
 name = "slab"

@@ -8,6 +8,9 @@ mod font;
 mod shape;
 mod wrap;
 
+#[cfg(feature = "canvas")]
+pub mod canvas;
+
 pub use font::{FontBook, FontFace, FontFaceId, FontLoadError};
 use shape::Shaping;
 

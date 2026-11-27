@@ -22,6 +22,7 @@ ron = { version = "0.10", optional = true }
 serde.workspace = true
 
 [dev-dependencies]
+engine-ui = { workspace = true, features = ["canvas"] }
 ron = "0.10"
 serde_json.workspace = true
 tempfile = "3"

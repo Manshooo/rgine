@@ -6,8 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+canvas = ["dep:ab_glyph_rasterizer", "dep:engine-render", "dep:skrifa"]
+
 [dependencies]
+ab_glyph_rasterizer = { version = "0.1", optional = true }
+engine-render = { workspace = true, optional = true }
 harfrust = "0.16.2"
+skrifa = { version = "0.50", optional = true }
 taffy = { version = "0.16", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
 unicode-bidi = "0.3"
 unicode-linebreak = "0.1"

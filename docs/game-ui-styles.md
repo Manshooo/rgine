@@ -66,6 +66,12 @@ Use `prepared.size` for the text block's logical bounds and `prepared.lines` to 
 
 Call `engine_ui::geometry::layout` with the styled tree, the viewport's logical width and height, the project's fonts and an image size callback. Each result has outer and content rectangles. For labels and buttons, add the returned text origin to the positions of the prepared glyphs. Use `Rect::contains` with a logical pointer position and `Rect::physical` to place a rectangle in physical pixels. [ADR 0032](adr/0032-game-ui-widget-geometry.md).
 
+## Draw prepared text
+
+Enable the `canvas` feature of `engine-ui` and keep a `text::canvas::GlyphAtlas` for each Canvas. Call `begin_frame` in `App::with_canvas`, then pass the prepared layout, its logical origin and its color to `draw_text`. For a widget, use the origin returned with its prepared layout. The draw call uses the Canvas clip and device scale. [ADR 0033](adr/0033-game-ui-glyph-atlas.md).
+
+Run `cargo run --locked -p engine-app --example ui_text -- 1` or pass `2` to exercise the sample at twice that scale. Omit the argument to use the window's display scale. The HUD warms all digits on frame 0 and introduces a minus sign on frame 12. The sample reports rasterizations, atlas uploads and uploaded bytes. Set `RUST_LOG=engine_render::drawable=debug` to see the Canvas draw-call count.
+
 The fixture puts two reusable cards in a row. Each card puts its image beside a column containing a label and button. Card width is 40% of the HUD content width with a minimum of 120 and maximum of 160 logical pixels. [XML fixture](../crates/ui/tests/fixtures/geometry.xml) · [CSS fixture](../crates/ui/tests/fixtures/geometry.css).
 
 | Physical viewport | Scale | Logical viewport | Logical card origins | Logical card size | First card in physical pixels `(x, y, w, h)` |
