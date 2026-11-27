@@ -1,0 +1,22 @@
+[package]
+name = "platformer-3d"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+engine-app = { workspace = true, features = ["physics"] }
+engine-ecs.workspace = true
+engine-scene.workspace = true
+engine-ui = { workspace = true, features = ["canvas", "input"] }
+ron = "0.10"
+serde.workspace = true
+
+[build-dependencies]
+engine-core.workspace = true
+engine-scene = { workspace = true, features = ["authoring"] }
+ron = "0.10"
+serde.workspace = true
+uuid = "1"

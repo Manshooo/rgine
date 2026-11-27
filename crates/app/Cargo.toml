@@ -18,7 +18,7 @@ engine-ecs.workspace = true
 engine-physics = { workspace = true, optional = true }
 engine-platform.workspace = true
 engine-render.workspace = true
-engine-scene = { workspace = true, optional = true }
+engine-scene = { workspace = true, features = ["authoring"], optional = true }
 engine-ui = { workspace = true, features = ["canvas", "input"], optional = true }
 ron = { version = "0.10", optional = true }
 serde.workspace = true

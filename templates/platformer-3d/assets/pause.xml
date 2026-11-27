@@ -1,0 +1,10 @@
+<ui>
+    <panel class="scrim">
+        <panel class="menu">
+            <label class="title" text="Paused" />
+            <button class="primary" text="Resume" action="resume" />
+            <button text="Restart level" action="restart" />
+            <label class="keyboard" text="Tab to select   Enter to confirm" />
+        </panel>
+    </panel>
+</ui>

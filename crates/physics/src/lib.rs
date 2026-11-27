@@ -174,7 +174,8 @@ pub struct Collider {
 
 impl Collider {
     /// Creates a collider at a body-relative pose, or a world-space pose
-    /// when standalone. Sensors emit overlaps without blocking motion.
+    /// when standalone. Sensors emit overlaps without blocking motion. Fixed
+    /// sensors also report overlaps with kinematic bodies.
     ///
     /// # Panics
     ///

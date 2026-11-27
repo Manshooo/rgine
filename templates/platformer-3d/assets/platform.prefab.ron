@@ -1,0 +1,14 @@
+(
+    schema_version: 2,
+    objects: {
+        "00000000-0000-0000-0000-000000000001": (
+            object_type: (name: "platformer.piece", version: 1),
+            parent: None,
+            properties: {
+                "kind": Platform,
+                "position": (0.0, 0.0, 0.0),
+                "size": (4.6, 0.7, 2.8),
+            },
+        ),
+    },
+)

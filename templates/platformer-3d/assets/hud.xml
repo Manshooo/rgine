@@ -1,0 +1,10 @@
+<ui>
+    <panel class="hud">
+        <panel class="counter">
+            <label class="coin-label" text="COINS" />
+            <label class="total" text="0 / 4" bind="coins" />
+        </panel>
+        <label class="progress" text="Find the violet checkpoint" bind="progress" />
+        <label class="controls" text="A/D or arrows · Space to jump · Esc to pause" />
+    </panel>
+</ui>
