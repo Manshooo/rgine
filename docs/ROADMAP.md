@@ -65,7 +65,7 @@ Rapier adapter, game-owned movement, interpolation, checkpoints, collectibles, m
 - data-driven behaviour: configs, curves, state machines and tuning values in RON with hot reload. This is the deliverable, not a script API;
 - no scripting layer and no visual scripting (ADR 0007). Reassess against the trigger conditions recorded there at the end of Phase 3.
 
-**Exit**: a running fixture on desktop and Android verifies fixed-step gameplay, mobile input, a live collectible counter and a pause menu. Gameplay data, UI layouts and styles can be reloaded without rebuilding or restarting the fixture.
+**Exit**: a running fixture on desktop and Android verifies fixed-step gameplay, mobile input, a live collectible counter and a pause menu. Gameplay data, UI layouts and styles can be reloaded without rebuilding or restarting the fixture. See the [platformer verification](phase-4-exit.md) for the route and live edits.
 
 ### Game UI
 

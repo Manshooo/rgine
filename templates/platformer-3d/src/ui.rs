@@ -2,6 +2,8 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use engine_app::ActionBinding;
 use engine_app::canvas::{Canvas, Viewport};
+#[cfg(feature = "dev-reload")]
+use engine_app::hot_reload::{UiDocument, UiReload};
 use engine_app::platform::{Input, InputEvent, MouseButton, TouchPhase};
 use engine_app::render_resources::{ResourceError, ResourceTable};
 use engine_ui::canvas::UiDrawList;
@@ -129,6 +131,8 @@ pub struct Overlay {
     interaction: Rc<RefCell<Interaction>>,
     atlas: GlyphAtlas,
     prepared: Option<Prepared>,
+    #[cfg(feature = "dev-reload")]
+    development: Option<(UiReload, UiDocument)>,
 }
 
 impl Overlay {
@@ -153,7 +157,16 @@ impl Overlay {
             interaction,
             atlas: GlyphAtlas::default(),
             prepared: None,
+            #[cfg(feature = "dev-reload")]
+            development: None,
         })
+    }
+
+    #[cfg(feature = "dev-reload")]
+    pub fn watch_hud(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
+        self.development = Some(UiReload::load(dir.join("hud.xml"), dir.join("ui.css"))?);
+        self.prepared = None;
+        Ok(())
     }
 
     pub fn draw(
@@ -163,6 +176,18 @@ impl Overlay {
         resources: &mut ResourceTable,
         canvas: &mut Canvas,
     ) -> Result<(), ResourceError> {
+        #[cfg(feature = "dev-reload")]
+        if let Some((reload, document)) = &mut self.development {
+            match reload.poll(document) {
+                Ok(true) => {
+                    self.prepared = None;
+                    self.interaction.borrow_mut().reset();
+                    eprintln!("platformer: reloaded HUD XML/CSS");
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!("platformer: {error}"),
+            }
+        }
         self.prepare(run, viewport).map_err(resource_error)?;
         let prepared = self.prepared.as_ref().expect("prepared overlay");
         let mut frame = self.atlas.begin_frame(resources).map_err(resource_error)?;
@@ -199,7 +224,8 @@ impl Overlay {
             return Ok(());
         }
         let size = viewport.logical_size().to_array();
-        let hud = self.styles.resolve(&self.hud, |_, _| Default::default());
+        let (hud_tree, styles) = self.hud_assets();
+        let hud = styles.resolve(hud_tree, |_, _| Default::default());
         let coins = format!("{} / {}", state.coins, state.total);
         let progress = if state.coins == state.total {
             "All coins collected"
@@ -223,9 +249,7 @@ impl Overlay {
             },
         )?;
         let foreground = if state.paused {
-            let styled = self
-                .styles
-                .resolve(&self.pause_menu, |path, _| interaction.input.state(path));
+            let styled = styles.resolve(&self.pause_menu, |path, _| interaction.input.state(path));
             let bounds = geometry::layout(&styled, size, &self.fonts, |_| None)?;
             interaction
                 .input
@@ -236,9 +260,7 @@ impl Overlay {
                 });
             Some(UiDrawList::prepare(bounds))
         } else if let Some(tree) = &self.touch_controls {
-            let styled = self
-                .styles
-                .resolve(tree, |path, _| interaction.input.state(path));
+            let styled = styles.resolve(tree, |path, _| interaction.input.state(path));
             let bounds = geometry::layout(&styled, size, &self.fonts, |_| None)?;
             let scale = viewport.display_scale();
             interaction.input.set_layout(&bounds, scale, |_, name| {
@@ -258,6 +280,14 @@ impl Overlay {
         });
         interaction.dirty = false;
         Ok(())
+    }
+
+    fn hud_assets(&self) -> (&WidgetTree, &StyleSheet) {
+        #[cfg(feature = "dev-reload")]
+        if let Some((_, document)) = &self.development {
+            return (&document.tree, &document.styles);
+        }
+        (&self.hud, &self.styles)
     }
 }
 

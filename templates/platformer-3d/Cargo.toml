@@ -6,6 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+dev-reload = ["engine-app/hot-reload", "engine-app/ui"]
+
 [dependencies]
 engine-app = { workspace = true, features = ["physics"] }
 engine-ecs.workspace = true

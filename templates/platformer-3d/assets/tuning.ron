@@ -1,0 +1,5 @@
+(
+    move_speed: 5.8,
+    jump_speed: 6.4,
+    fall_acceleration: 20.0,
+)

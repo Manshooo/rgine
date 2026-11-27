@@ -38,3 +38,16 @@ adb shell am start -n dev.rgine.platformer/android.app.NativeActivity
 Use the `x86_64-linux-android` Rust target and `x86_64` package argument for an x86-64 emulator. The script prints the APK path and signs it with a local debug key.
 
 Hold **Left** or **Right** and tap **Jump** with another finger. **Pause** opens the menu. Tap **Resume** or **Restart level** to continue playing. Release the previous direction and touch it again after resume.
+
+## Live development edits
+
+Copy the editable files to a scratch directory and launch the desktop build with that directory.
+
+```powershell
+$dev = Join-Path $env:TEMP 'rgine-platformer-dev'
+New-Item -ItemType Directory -Force $dev | Out-Null
+Copy-Item templates/platformer-3d/assets/tuning.ron,templates/platformer-3d/assets/hud.xml,templates/platformer-3d/assets/ui.css $dev
+cargo run --locked -p platformer-3d --features dev-reload -- --dev $dev
+```
+
+Edit `tuning.ron` for movement, jumps or gravity, `hud.xml` for the HUD layout, or `ui.css` for the stylesheet. The game reports applied edits and source errors in the terminal. With invalid files it keeps the last valid values. See the [Phase 4 verification](../../docs/phase-4-exit.md) for the desktop and Android route.

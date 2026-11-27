@@ -12,12 +12,10 @@ use engine_ecs::{Commands, Component, Entity, World};
 use engine_ui::input::InputResult;
 
 use crate::level::{self, Checkpoint, Coin};
+use crate::tuning::Tuning;
 use crate::ui::{Interaction, MenuAction, TouchButton};
 
 const PLAYER_RADIUS: f32 = 0.44;
-const MOVE_SPEED: f32 = 5.8;
-const JUMP_SPEED: f32 = 6.4;
-const FALL_ACCELERATION: f32 = 20.0;
 const RESPAWN_HEIGHT: f32 = -4.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -116,6 +114,7 @@ impl Game {
         *app.world_mut() = world;
         app.insert_resource(physics);
         app.insert_resource(Menu::default());
+        app.world_mut().resources_mut().insert(Tuning::bundled());
         install_input(&mut app, Rc::clone(&interaction));
         app.add_system(move |world, commands, step, _| {
             update(world, commands, step, player, start)
@@ -183,6 +182,8 @@ fn install_input(app: &mut App, interaction: Rc<RefCell<Interaction>>) {
             _ => None,
         };
         if let Some(paused) = next.filter(|&paused| paused != menu.paused) {
+            #[cfg(debug_assertions)]
+            eprintln!("platformer: paused={paused}");
             menu.paused = paused;
             interaction.reset();
             if paused {
@@ -226,6 +227,7 @@ fn update(
     player: Entity,
     start: Vec3,
 ) {
+    let tuning = *world.resources().get::<Tuning>().unwrap();
     let menu = step.resources_mut().get_mut::<Menu>().unwrap();
     let restart = std::mem::take(&mut menu.restart);
     let mut runs = world.query::<&mut Run>();
@@ -248,6 +250,11 @@ fn update(
         let position = run.checkpoint.map_or(start, |entity| {
             world.get::<Checkpoint>(entity).unwrap().respawn
         });
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "platformer: respawn x={:.2}, coins={}",
+            position.x, run.coins
+        );
         respawn(commands, player, run, position);
         return;
     }
@@ -258,15 +265,25 @@ fn update(
     let motion = motions.get_mut(player).unwrap();
     if run.vertical_speed <= 0.0 && motion.result().is_some_and(|movement| movement.grounded) {
         run.vertical_speed = if actions.state(Action::Jump).pressed {
-            JUMP_SPEED
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "platformer: jump x={:.2}, direction={movement}, speed={}",
+                world.get::<PhysicsPose>(player).unwrap().translation.x,
+                tuning.jump_speed
+            );
+            tuning.jump_speed
         } else {
             0.0
         };
     }
     let seconds = step.delta().as_secs_f32();
-    run.vertical_speed = (run.vertical_speed - FALL_ACCELERATION * seconds).max(-24.0);
+    run.vertical_speed = (run.vertical_speed - tuning.fall_acceleration * seconds).max(-24.0);
     motion.request_translation(
-        Vec3::new(f32::from(movement) * MOVE_SPEED, run.vertical_speed, 0.0) * seconds,
+        Vec3::new(
+            f32::from(movement) * tuning.move_speed,
+            run.vertical_speed,
+            0.0,
+        ) * seconds,
     );
 }
 
@@ -327,12 +344,16 @@ fn after_physics(
             && !std::mem::replace(&mut coin.collected, true)
         {
             run.coins += 1;
+            #[cfg(debug_assertions)]
+            eprintln!("platformer: coin {}/{}", run.coins, run.total);
             commands.remove::<Renderable>(other);
             commands.remove::<Collider>(other);
         }
         if let Some(checkpoint) = world.get::<Checkpoint>(other)
             && run.checkpoint != Some(other)
         {
+            #[cfg(debug_assertions)]
+            eprintln!("platformer: checkpoint x={:.2}", checkpoint.respawn.x);
             if let Some(previous) = run.checkpoint.replace(other) {
                 commands.insert(
                     previous,
