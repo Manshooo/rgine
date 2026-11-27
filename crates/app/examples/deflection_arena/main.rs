@@ -8,7 +8,8 @@ mod tests;
 use engine_app::core::glam::{Vec3, Vec3Swizzles};
 use engine_app::ecs::{Commands, Component, Entity, World};
 use engine_app::physics::{
-    BodyKind, Collider, ColliderShape, KinematicMotion, PhysicsPose, PhysicsWorld, RigidBody,
+    BodyKind, Collider, ColliderShape, KinematicMotion, PhysicsInterpolation, PhysicsPose,
+    PhysicsWorld, RigidBody,
 };
 use engine_app::platform::{Input, KeyCode, PhysicalKey, WindowDesc};
 use engine_app::scene::{MeshKey, MeshRegistry, Renderable, Transform};
@@ -85,6 +86,9 @@ fn arena_app() -> (App, MeshRegistry, Entity) {
     let paddle = world.spawn_empty();
     world.insert(paddle, paddle_body()).unwrap();
     world
+        .insert(paddle, PhysicsInterpolation::default())
+        .unwrap();
+    world
         .insert(
             paddle,
             Collider::new(
@@ -135,6 +139,10 @@ fn arena_app() -> (App, MeshRegistry, Entity) {
                 .get_mut::<PhysicsWorld>()
                 .unwrap()
                 .step(world, commands, delta);
+        } else {
+            world
+                .query::<&mut PhysicsInterpolation>()
+                .for_each(|_, samples| samples.snap_to_latest());
         }
     });
     let presentation = schedule.add_stage();
@@ -324,6 +332,7 @@ fn serve(commands: &mut Commands, mesh: MeshKey, tick: u64, serve: usize) {
     commands
         .spawn_empty()
         .insert(RigidBody::new(BodyKind::Dynamic, pose).with_linear_velocity(velocity))
+        .insert(PhysicsInterpolation::default())
         .insert(
             Collider::new(
                 ColliderShape::Sphere(BALL_RADIUS),
@@ -391,12 +400,6 @@ fn publish(world: &World, commands: &mut Commands, step: &mut StepContext, paddl
     } else {
         PADDLE_COLOR
     };
-    world
-        .query::<(&PhysicsPose, &mut Transform)>()
-        .for_each(|_, (pose, transform)| {
-            transform.translation = pose.translation;
-            transform.rotation = pose.rotation;
-        });
     let arena = step.resources_mut().get_mut::<Arena>().unwrap();
     arena.target_live = target_live;
     arena.hits += hits;

@@ -168,7 +168,8 @@ impl App {
             .map(drop)
     }
 
-    /// Renders scene components extracted from the world after each fixed update.
+    /// Renders scene components extracted after fixed updates and interpolates
+    /// opted-in physics poses on redraws between updates.
     /// The mesh registry supplies stable geometry across native surface changes.
     pub fn run_scene(
         self,
@@ -333,8 +334,11 @@ impl Runner<'_> {
             frames.refresh_scene(self.simulation.world_mut(), &mut **refresh)
         });
         let changed = !frames.is_benchmark()
-            && (steps > 0 || refreshed)
-            && frames.extract_for_redraw(self.simulation.world());
+            && (steps > 0 || refreshed || (redraw && frames.is_interpolating()))
+            && frames.extract_for_redraw(
+                self.simulation.world(),
+                self.simulation.interpolation_alpha(),
+            );
         #[cfg(feature = "hot-reload")]
         let changed = frames.poll_scene_shaders() || changed;
         if redraw || frames.benchmark_interrupted() {

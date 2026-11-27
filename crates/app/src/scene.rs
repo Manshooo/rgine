@@ -73,22 +73,48 @@ pub struct NodeMatrix(pub Mat4);
 
 pub(crate) fn extract(world: &World) -> Scene {
     let mut scene = Scene::default();
-    extract_into(world, &mut scene);
+    extract_into(world, &mut scene, 1.0);
     scene
 }
 
-pub(crate) fn extract_into(world: &World, scene: &mut Scene) {
+pub(crate) fn extract_into(world: &World, scene: &mut Scene, alpha: f32) -> bool {
+    let interpolating = std::cell::Cell::new(false);
+    #[cfg(feature = "physics")]
+    let poses = world.query::<&crate::physics::PhysicsInterpolation>();
+    let transform_at = |entity, transform: &Transform| {
+        #[cfg(not(feature = "physics"))]
+        let _ = (entity, alpha);
+        #[cfg(feature = "physics")]
+        if let Some(samples) = poses.get(entity)
+            && let Some(pose) = samples.sample(alpha)
+        {
+            interpolating.set(interpolating.get() || samples.is_moving());
+            return Transform {
+                translation: pose.translation,
+                rotation: pose.rotation,
+                scale: transform.scale,
+            };
+        }
+        *transform
+    };
+
     scene.camera = None;
     scene.objects.clear();
     world
         .query::<(&Camera, &Transform)>()
-        .for_each(|_, (camera, transform)| {
-            scene.camera.get_or_insert_with(|| SceneCamera {
-                view: Mat4::from_rotation_translation(transform.rotation, transform.translation)
+        .for_each(|entity, (camera, transform)| {
+            scene.camera.get_or_insert_with(|| {
+                let transform = transform_at(entity, transform);
+                SceneCamera {
+                    view: Mat4::from_rotation_translation(
+                        transform.rotation,
+                        transform.translation,
+                    )
                     .inverse(),
-                vertical_fov: camera.vertical_fov,
-                near: camera.near,
-                far: camera.far,
+                    vertical_fov: camera.vertical_fov,
+                    near: camera.near,
+                    far: camera.far,
+                }
             });
         });
     world
@@ -96,7 +122,7 @@ pub(crate) fn extract_into(world: &World, scene: &mut Scene) {
         .for_each(|entity, (renderable, transform)| {
             scene.objects.push(SceneObject {
                 mesh: renderable.mesh,
-                transform: transform.matrix()
+                transform: transform_at(entity, transform).matrix()
                     * world
                         .get::<NodeMatrix>(entity)
                         .map_or(Mat4::IDENTITY, |m| m.0),
@@ -106,8 +132,8 @@ pub(crate) fn extract_into(world: &World, scene: &mut Scene) {
     #[cfg(feature = "hot-reload")]
     world
         .query::<(&crate::hot_reload::PropInstances, &Transform)>()
-        .for_each(|_, (instances, transform)| {
-            let world_transform = transform.matrix();
+        .for_each(|entity, (instances, transform)| {
+            let world_transform = transform_at(entity, transform).matrix();
             scene
                 .objects
                 .extend(instances.0.iter().map(|object| SceneObject {
@@ -115,4 +141,5 @@ pub(crate) fn extract_into(world: &World, scene: &mut Scene) {
                     ..*object
                 }));
         });
+    interpolating.get()
 }

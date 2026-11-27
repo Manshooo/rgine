@@ -49,6 +49,12 @@ impl Clock {
         );
         (nanos / step).min(u128::from(max_steps)) as u32
     }
+
+    /// The elapsed time left over after the last fixed-step accumulation.
+    #[must_use]
+    pub fn remainder(&self) -> Duration {
+        self.accumulator
+    }
 }
 
 impl Default for Clock {

@@ -151,6 +151,15 @@ impl Simulation {
         steps
     }
 
+    /// The fraction of the next fixed step accumulated by [`Self::advance`].
+    /// Use it to interpolate presentation between the last two completed poses.
+    #[must_use]
+    pub fn interpolation_alpha(&self) -> f32 {
+        self.clock
+            .remainder()
+            .div_duration_f64(self.fixed_step.duration) as f32
+    }
+
     fn run_step(&mut self) {
         self.context.delta = self.fixed_step.duration;
         self.context.index += 1;

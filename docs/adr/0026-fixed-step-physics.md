@@ -15,6 +15,12 @@ An entity can have one body and one collider. With a body, the collider pose is 
 
 The adapter publishes world-space `PhysicsPose` on entities with bodies. Rapier owns the simulated pose after construction. Gameplay reads that pose and can use it to place a renderable. A removed body loses its pose at the physics stage boundary. Contact and sensor transitions use ECS entity handles and belong to the step that reported them. A stop caused by a removal can refer to an entity that has already despawned.
 
+Add `PhysicsInterpolation::default()` to a body to smooth its presentation. `App::run_scene` samples the last two completed physics poses using the fraction of a fixed step left in the clock. The renderer interpolates translation and rotation and keeps the scale from `Transform`. Games can also read `PhysicsInterpolation::sample` with `Simulation::interpolation_alpha` when extracting their own presentation. Gameplay continues to read the latest simulated `PhysicsPose`.
+
+On spawn or replacement of a `RigidBody`, both samples start at the completed pose for that step. To respawn a character, remove and reinsert its body at the new position before the physics stage. A game that stops calling `PhysicsWorld::step` while keeping the app schedule running can call `PhysicsInterpolation::snap_to_latest` when pausing, as Deflection Arena does.
+
 ## Verification
 
 `cargo test --locked -p engine-app --features physics --test fixed_physics` checks falling, landing, sensor transitions, deferred insertion, body and collider replacement, and despawn. The same fixed-step trajectory and events are recorded under 50 Hz and 100 Hz frame schedules.
+
+`cargo test --locked -p engine-app --features physics --lib redraws_interpolate` checks scene extraction at 125 Hz and 250 Hz, identical simulated motion and a snap to the respawn pose on the next frame.

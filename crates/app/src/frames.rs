@@ -57,6 +57,7 @@ struct SceneFrames {
     meshes: MeshRegistry,
     snapshot: Scene,
     scratch: Scene,
+    interpolating: bool,
     light: scene::DirectionalLight,
     hemisphere_light: scene::HemisphereLight,
     skybox_enabled: bool,
@@ -148,6 +149,7 @@ impl Frames {
                 meshes,
                 snapshot: scene::extract(world),
                 scratch: Scene::default(),
+                interpolating: false,
                 light,
                 hemisphere_light,
                 skybox_enabled,
@@ -156,16 +158,20 @@ impl Frames {
         }
     }
 
-    pub(crate) fn extract_for_redraw(&mut self, world: &World) -> bool {
+    pub(crate) fn is_interpolating(&self) -> bool {
+        self.scene.as_ref().is_some_and(|scene| scene.interpolating)
+    }
+
+    pub(crate) fn extract_for_redraw(&mut self, world: &World, alpha: f32) -> bool {
         let Some(scene) = &mut self.scene else {
             return false;
         };
-        scene::extract_into(world, &mut scene.scratch);
-        if scene.snapshot == scene.scratch {
-            return false;
+        scene.interpolating = scene::extract_into(world, &mut scene.scratch, alpha);
+        let changed = scene.snapshot != scene.scratch;
+        if changed {
+            std::mem::swap(&mut scene.snapshot, &mut scene.scratch);
         }
-        std::mem::swap(&mut scene.snapshot, &mut scene.scratch);
-        !self.occluded && !self.size.contains(&0)
+        (changed || scene.interpolating) && !self.occluded && !self.size.contains(&0)
     }
 
     pub(crate) fn refresh_scene(
@@ -271,6 +277,7 @@ impl Frames {
             }
             self.surface = Some(Surface::Ready(Box::new(drawable)));
         }
+        let interpolating = self.is_interpolating();
         if let Some(Surface::Ready(drawable)) = &mut self.surface {
             drawable.resize(self.size);
             let end_of_orbit =
@@ -290,7 +297,7 @@ impl Frames {
                 } else {
                     commands.request_redraw(windows);
                 }
-            } else if outcome == DrawOutcome::Retry {
+            } else if outcome == DrawOutcome::Retry || interpolating {
                 commands.request_redraw(windows);
             }
         }
@@ -309,6 +316,143 @@ mod tests {
     use super::*;
     use crate::scene::{Camera, Mesh, Renderable, Transform};
     use crate::{App, FixedStep, Runner};
+
+    #[cfg(feature = "physics")]
+    #[test]
+    fn redraws_interpolate_the_same_fixed_trajectory_and_snap_on_respawn() {
+        use engine_core::glam::Quat;
+
+        use crate::physics::{
+            BodyKind, Collider, ColliderShape, KinematicMotion, PhysicsInterpolation,
+            PhysicsPlugin, PhysicsPose, RigidBody,
+        };
+
+        fn run(frame: Duration, positions: &[f32]) -> Vec<PhysicsPose> {
+            let step = Duration::from_millis(10);
+            let mut app = App::new()
+                .with_fixed_step(FixedStep::new(step, NonZeroU32::MIN))
+                .add_plugin(PhysicsPlugin::default());
+            app.insert_resource(Vec::<PhysicsPose>::new());
+            let mut meshes = MeshRegistry::default();
+            let cube = meshes.insert(Mesh::cube());
+            let world = app.world_mut();
+            let pawn = world.spawn_empty();
+            let scale = Vec3::new(2.0, 3.0, 4.0);
+            let transform = Transform {
+                scale,
+                ..Transform::default()
+            };
+            let respawn = PhysicsPose {
+                translation: Vec3::X * 100.0,
+                rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            };
+            world.insert(pawn, transform).unwrap();
+            world
+                .insert(
+                    pawn,
+                    Renderable {
+                        mesh: cube,
+                        color: [1.0; 4],
+                    },
+                )
+                .unwrap();
+            world
+                .insert(
+                    pawn,
+                    RigidBody::new(BodyKind::Kinematic, PhysicsPose::default()),
+                )
+                .unwrap();
+            world
+                .insert(
+                    pawn,
+                    Collider::new(ColliderShape::Sphere(0.25), PhysicsPose::default(), false),
+                )
+                .unwrap();
+            world.insert(pawn, KinematicMotion::default()).unwrap();
+            world.insert(pawn, PhysicsInterpolation::default()).unwrap();
+            app.add_system(move |world, commands, context, _| match context.index() {
+                1..=3 => world
+                    .query::<&mut KinematicMotion>()
+                    .get_mut(pawn)
+                    .unwrap()
+                    .request_translation(Vec3::X),
+                4 => {
+                    commands.remove::<RigidBody>(pawn);
+                    commands.insert(pawn, RigidBody::new(BodyKind::Kinematic, respawn));
+                }
+                _ => {}
+            });
+            let schedule = app.schedule_mut();
+            let capture = schedule.add_stage();
+            schedule.add_system(capture, move |world, _, context, _| {
+                context
+                    .resources_mut()
+                    .get_mut::<Vec<PhysicsPose>>()
+                    .unwrap()
+                    .push(*world.get::<PhysicsPose>(pawn).unwrap());
+            });
+
+            let mut frames = app.scene_frames(meshes, [0.0; 4]);
+            frames.size = [800, 600];
+            let mut runner = Runner::new(app);
+            runner.frames = Some(frames);
+            let mut commands = Commands::default();
+            runner.update(&[Event::Resumed], &mut commands);
+            let _ = commands.drain();
+
+            for (index, &x) in positions.iter().enumerate() {
+                // The first moving pair starts at the same displayed pose.
+                // It still needs a redraw to show movement before the next step.
+                let redraw = frame * (index as u32 + 1) != step * 2;
+                runner.advance_frame(frame, redraw, &mut commands);
+                if !redraw {
+                    assert_eq!(commands.drain(), [Command::RequestRedraw(runner.open[0])]);
+                }
+                let scene = runner.frames.as_ref().unwrap().scene.as_ref().unwrap();
+                let model = scene.snapshot.objects[0].transform;
+                let rotation = if x == respawn.translation.x {
+                    respawn.rotation
+                } else {
+                    Quat::IDENTITY
+                };
+                let expected = engine_core::glam::Mat4::from_scale_rotation_translation(
+                    scale,
+                    rotation,
+                    Vec3::X * x,
+                );
+                assert!(model.abs_diff_eq(expected, 0.0001), "{model:?} at {x}");
+                assert_eq!(
+                    *runner.simulation.world().get::<Transform>(pawn).unwrap(),
+                    transform
+                );
+            }
+
+            let world = runner.simulation.world();
+            let samples = world.get::<PhysicsInterpolation>(pawn).unwrap();
+            assert_eq!(samples.sample(0.0), Some(respawn));
+            assert_eq!(samples.sample(1.0), Some(respawn));
+            runner
+                .simulation
+                .resources()
+                .get::<Vec<PhysicsPose>>()
+                .unwrap()
+                .clone()
+        }
+
+        let at_250_hz = run(
+            Duration::from_millis(4),
+            &[0.0, 0.0, 1.0, 1.0, 1.0, 1.4, 1.8, 2.2, 2.6, 100.0],
+        );
+        let at_125_hz = run(Duration::from_millis(8), &[0.0, 1.0, 1.4, 2.2, 100.0]);
+        assert_eq!(at_250_hz, at_125_hz);
+        assert_eq!(
+            at_125_hz
+                .iter()
+                .map(|pose| pose.translation.x)
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 3.0, 100.0],
+        );
+    }
 
     #[test]
     fn redraws_for_deferred_spawns_transform_changes_and_despawns() {
